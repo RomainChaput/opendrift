@@ -1957,6 +1957,18 @@ class OpenDriftSimulation(PhysicsMethods, Timeable):
 
                 self.seed_within_polygon(lons=lons, lats=lats, number=num_elements, **kwargs)
 
+    def seed_letters(self, text, lon, lat, time, number, scale=1.2):
+        """Seed elements within text polygons"""
+        from matplotlib.font_manager import FontProperties
+        fp = FontProperties(family='Bitstream Vera Sans', weight='bold')
+        pol = matplotlib.textpath.TextPath((lon, lat), text, size=1, prop=fp)
+        pol._vertices *= np.array([scale, scale])
+        patch = matplotlib.patches.PathPatch(
+                pol, facecolor='none', edgecolor='black', transform=ccrs.PlateCarree())
+        po = patch.get_path().to_polygons()
+        for p in po:
+            self.seed_within_polygon(lons=p[:,0], lats=p[:,1], number=number, time=time)
+
     def seed_from_ladim(self, ladimfile, roms):
         """Seed elements from ladim \\*.rls text file: [time, x, y, z, name]"""
 
@@ -3646,8 +3658,8 @@ class OpenDriftSimulation(PhysicsMethods, Timeable):
         for readerName in self.readers:
             reader = self.readers[readerName]
             if variable in reader.variables:
-                if time is None or (time>= reader.start_time
-                        and time <= reader.end_time) or (
+                if time is None or reader.start_time is None or (
+                    time>= reader.start_time and time <= reader.end_time) or (
                         reader.always_valid is True):
                     break
         if time is None:
