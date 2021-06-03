@@ -94,10 +94,6 @@ class OpenDriftSimulation(PhysicsMethods, Timeable):
             module/subclass using environment data from any readers which
             can provide the requested variables. Used in method 'update'
             to update properties of elements every time_step.
-        proj4: string defining the common spatial reference system (SRS) onto
-            which data from all readers are interpolated
-        proj: Proj object initialised from proj4 string; used for
-            coordinate tranformations
         time_step: timedelta object, time interval at which element properties
             are updated (including advection).
         time_step_output: timedelta object, time interval at which element
@@ -129,6 +125,10 @@ class OpenDriftSimulation(PhysicsMethods, Timeable):
     plot_comparison_colors = ['k', 'r', 'g', 'b', 'm', 'c', 'y']
 
     proj_latlon = pyproj.Proj('+proj=latlong')
+
+    @classmethod
+    def SRS(cls):
+        return cls.proj_latlon
 
     def __init__(self, seed=0, iomodule='netcdf',
                  loglevel=logging.DEBUG, logtime='%H:%M:%S', logfile=None):
