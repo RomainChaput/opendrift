@@ -13,7 +13,7 @@
 # 
 #  Under development - more testing to do
 # 
-# Modified: 31/05/2021. RChaput: Add settlement restricted to suitable habitat only
+# Modified: 31/05/2021. RChaput: Add settlement restricted to suitable habitat only + vertical swimming abilities (in development)
 
 
 import numpy as np
@@ -135,12 +135,6 @@ class BivalveLarvae(OceanDrift):
         
     def habitat(self, shapefile_location):
         """Suitable habitat in a shapefile"""
-        #global multiShp
-        #global shp # terrible idea, but works ok for the moment
-        #global bins
-        #shp = shapefile.Reader(shapefile_location)
-        #bins = shp.shapes()
-        #return shp, bins
         polyShp = fiona.open(shapefile_location) # import shapefile
         polyList = []
         #polyProperties = []
@@ -153,7 +147,7 @@ class BivalveLarvae(OceanDrift):
         self.multiShp = MultiPolygon(polyList).buffer(0) # Aggregate polygons in a MultiPolygon object and buffer to fuse polygons and remove errors
         return self.multiShp, self.centers
     
-    # Haversine formula
+    # Haversine formula to compute the distance between two points
     @numba.jit(nopython=True)
     def haversine_distance(self, s_lng, s_lat, e_lng, e_lat):
          # approximate radius of earth in km
@@ -171,7 +165,7 @@ class BivalveLarvae(OceanDrift):
          dist = np.zeros(len(centers))
          dist = self.haversine_distance(lon, lat, [centers[0] for centers in centers], [centers[1] for centers in centers])
          nearest_center = np.argmin(dist)
-         nearest_center, min(dist)
+         return nearest_center, min(dist)
 
     def update_terminal_velocity(self, Tprofiles=None,
                                  Sprofiles=None, z_index=None):
