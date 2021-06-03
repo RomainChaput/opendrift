@@ -19,8 +19,10 @@
 import numpy as np
 from opendrift.models.oceandrift import OceanDrift, Lagrangian3DArray
 import logging; logger = logging.getLogger(__name__)
+#import shapefile
 from shapely.geometry import Polygon, Point, MultiPolygon # added for settlement in polygon only
 import fiona # to import habitat
+import numba
 
 
 # Defining the  element properties from Pelagicegg model
@@ -104,7 +106,7 @@ class BivalveLarvae(OceanDrift):
 
     # Default colors for plotting
     status_colors = {'initial': 'green', 'active': 'blue',
-                     'settled_on_coast': 'red', 'died': 'yellow', 'settled_on_bottom': 'magenta'}
+                     'settled_on_coast': 'red', 'died': 'yellow', 'settled_on_bottom': 'magenta'} # Black = settled in habitat
 
     def __init__(self, *args, **kwargs):
         
@@ -126,21 +128,50 @@ class BivalveLarvae(OceanDrift):
                            'level': self.CONFIG_LEVEL_BASIC}})
         self._add_config({ 'drift:settlement_in_habitat': {'type': 'bool', 'default': False,
                            'description': 'settlement restricted to suitable habitat only',
-                           'level': self.CONFIG_LEVEL_BASIC}})   
+                           'level': self.CONFIG_LEVEL_BASIC}}) 
+        self._add_config({ 'drift:active_vertical_swimming': {'type': 'bool', 'default': False,
+                           'description': 'vertical movements correlated with the direction of inshore currents',
+                           'level': self.CONFIG_LEVEL_BASIC}}) 
         
     def habitat(self, shapefile_location):
         """Suitable habitat in a shapefile"""
-        global multiShp
+        #global multiShp
+        #global shp # terrible idea, but works ok for the moment
+        #global bins
+        #shp = shapefile.Reader(shapefile_location)
+        #bins = shp.shapes()
+        #return shp, bins
         polyShp = fiona.open(shapefile_location) # import shapefile
         polyList = []
-        polyProperties = []
+        #polyProperties = []
+        centers = []
         for poly in polyShp: # create individual polygons from shapefile
-             polyGeom = Polygon(poly['geometry']['coordinates'][0]) 
-             polyList.append(polyGeom)
-             polyProperties.append(poly['properties'])
-        multiShp = MultiPolygon(polyList).buffer(0) # Aggregate polygons in a MultiPolygon object and buffer to fuse polygons and remove errors
-        return multiShp
-        
+             polyGeom = Polygon(poly['geometry']['coordinates'][0])
+             polyList.append(polyGeom) # Compile polygon in a list 
+             centers.append(polyGeom.centroid.coords[0]) # Compute centroid and return a [lon, lat] list
+             #polyProperties.append(poly['properties']) # For debugging => check if single polygon
+        self.multiShp = MultiPolygon(polyList).buffer(0) # Aggregate polygons in a MultiPolygon object and buffer to fuse polygons and remove errors
+        return self.multiShp, self.centers
+    
+    # Haversine formula
+    @numba.jit(nopython=True)
+    def haversine_distance(self, s_lng, s_lat, e_lng, e_lat):
+         # approximate radius of earth in km
+         R = 6373.0
+         s_lat = np.deg2rad(s_lat)                    
+         s_lng = np.deg2rad(s_lng)     
+         e_lat = np.deg2rad(e_lat)                       
+         e_lng = np.deg2rad(e_lng)
+         d = np.sin((e_lat - s_lat)/2)**2 + \
+             np.cos(s_lat)*np.cos(e_lat) * \
+             np.sin((e_lng - s_lng)/2)**2
+         return 2 * R * np.arcsin(np.sqrt(d))
+     
+    def nearest_habitat(self, lon, lat, centers):
+         dist = np.zeros(len(centers))
+         dist = self.haversine_distance(lon, lat, [centers[0] for centers in centers], [centers[1] for centers in centers])
+         nearest_center = np.argmin(dist)
+         nearest_center, min(dist)
 
     def update_terminal_velocity(self, Tprofiles=None,
                                  Sprofiles=None, z_index=None):
@@ -184,8 +215,11 @@ class BivalveLarvae(OceanDrift):
             self.interact_with_habitat()
 
         # Turbulent Mixing or settling-only 
-        if self.get_config('drift:vertical_mixing') is True:
+        if self.get_config('drift:vertical_mixing') is True & self.get_config('drift:active_vertical_swimming') is False:
             self.update_terminal_velocity()  #compute vertical velocities, two cases possible - constant, or same as pelagic egg
+            self.vertical_mixing()
+        elif self.get_config('drift:vertical_mixing') is True & self.get_config('drift:active_vertical_swimming') is True:
+            self.vertical_swimming()  #compute vertical velocities based on direction of the currents
             self.vertical_mixing()
         else:  # Buoyancy
             self.update_terminal_velocity()
@@ -346,22 +380,53 @@ class BivalveLarvae(OceanDrift):
            """        
            # Get age of particle
            old_enough = np.where(self.elements.age_seconds >= self.get_config('drift:min_settlement_age_seconds'))[0]
+           # Extract particles positions
            if len(old_enough) > 0 :
                pts_lon = self.elements.lon[old_enough]
                pts_lat = self.elements.lat[old_enough]
-               ## Check if position of particle is within boundaries of polygons
+               ## Check if position of particle is within boundaries of polygons => slow version because loop over polygons
+               #for i in range(len(pts_lon)):
+               #    pt = Point(pts_lon[i], pts_lat[i])
+               #    for index, item in enumerate(shp):
+               #        pts = bins[index].points # Access one polygon
+               #        poly = Polygon(pts)
+               #        in_habitat = pt.within(poly)
+               #        if in_habitat == True:
+               #            #import pdb; pdb.set_trace()
+               #            self.environment.land_binary_mask[old_enough[i]] = 6
                for i in range(len(pts_lon)): # => faster version
                     pt = Point(pts_lon[i], pts_lat[i])
-                    in_habitat = pt.within(multiShp)
+                    in_habitat = pt.within(self.multiShp)
                     if in_habitat == True:
                         self.environment.land_binary_mask[old_enough[i]] = 6
                         
            # Deactivate elements that are within a polygon and old enough to settle
            # ** function expects an array of size consistent with self.elements.lon                
            self.deactivate_elements((self.environment.land_binary_mask == 6), reason='home_sweet_home')
-		   
-                       
+	
+                                
+    def vertical_swimming(self):
+           """"Vertical movements of the larvae when caught in inshore currents: larvae try to stay within the currents that move
+           them closer to shore, otherwise the larvae go up and down to sample the water column
+           """
+           # Check distance with nearest_habitat
+           pts_lon = self.elements.lon
+           pts_lat = self.elements.lat
+           pts_lon_old = self.previous_lon
+           pts_lat_old = self.previous_lat
+           for i in range(len(pts_lon)):
+               dist_old[i] = self.nearest_habitat(pts_lon_old, pts_lat_old, self.centers)     
+               dist[i] = self.nearest_habitat(pts_lon, pts_lat, self.centers)
+               if dist_old > dist:
+                   
+                    
+           
         
+        
+        
+        
+        
+    
     def increase_age_and_retire(self):  # ##So that if max_age_seconds is exceeded particle is flagged as died
             """Increase age of elements, and retire if older than config setting.
 
