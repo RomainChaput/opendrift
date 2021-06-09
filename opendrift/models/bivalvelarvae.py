@@ -116,7 +116,7 @@ class BivalveLarvae(OceanDrift):
         self.set_config('general:coastline_action', 'previous')
 
         # resuspend larvae that reach seabed by default 
-        self.set_config('drift:lift_to_seafloor',True)
+        self._set_config_default('general:seafloor_action', 'lift_to_seafloor')
         # set the defasult min_settlement_age_seconds to 0.0
         # self.set_config('drift:min_settlement_age_seconds', '0.0')
 
