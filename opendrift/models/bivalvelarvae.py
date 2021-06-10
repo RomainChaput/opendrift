@@ -473,10 +473,9 @@ class BivalveLarvae(OceanDrift):
         if self.get_config('drift:vertical_mixing') is True:
             self.update_terminal_velocity()  #compute vertical velocities, two cases possible - constant, or same as pelagic egg
             self.vertical_mixing()
-        else:  # Buoyancy
-            pass    
-            #self.update_terminal_velocity()
-            #self.vertical_buoyancy()
+        else:  # Buoyancy   
+            self.update_terminal_velocity()
+            self.vertical_buoyancy()
 
         if self.get_config('drift:active_vertical_swimming') is True:
             self.vertical_swimming()
