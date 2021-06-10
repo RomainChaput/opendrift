@@ -21,6 +21,7 @@ from opendrift.models.oceandrift import OceanDrift, Lagrangian3DArray
 import logging; logger = logging.getLogger(__name__)
 from shapely.geometry import Polygon, Point, MultiPolygon # added for settlement in polygon only
 import fiona # to import habitat
+import random
 
 
 # Defining the  element properties from Pelagicegg model
@@ -41,6 +42,9 @@ class BivalveLarvaeObj(Lagrangian3DArray):
         ('hatched', {'dtype': np.float32,
                      'units': '',
                      'default': 0.}),
+        ('vertical_movement', {'dtype': np.float32,
+                     'units': '',
+                     'default': 1.0}),
         ('terminal_velocity', {'dtype': np.float32,
                        'units': 'm/s',
                        'default': 0.})])
@@ -104,7 +108,7 @@ class BivalveLarvae(OceanDrift):
 
     # Default colors for plotting
     status_colors = {'initial': 'green', 'active': 'blue',
-                     'settled_on_coast': 'red', 'died': 'yellow', 'settled_on_bottom': 'magenta'}
+                     'settled_on_coast': 'red', 'died': 'yellow', 'settled_on_bottom': 'magenta'} # Black = settled in habitat
 
     def __init__(self, *args, **kwargs):
         
@@ -116,9 +120,7 @@ class BivalveLarvae(OceanDrift):
         self.set_config('general:coastline_action', 'previous')
 
         # resuspend larvae that reach seabed by default 
-        self._set_config_default('general:seafloor_action', 'lift_to_seafloor')
-        # set the defasult min_settlement_age_seconds to 0.0
-        # self.set_config('drift:min_settlement_age_seconds', '0.0')
+        self.set_config('general:seafloor_action','lift_to_seafloor')
 
         ##add config spec
         self._add_config({ 'drift:min_settlement_age_seconds': {'type': 'float', 'default': 0.0,'min': 0.0, 'max': 1.0e10, 'units': 'seconds',
@@ -126,26 +128,55 @@ class BivalveLarvae(OceanDrift):
                            'level': self.CONFIG_LEVEL_BASIC}})
         self._add_config({ 'drift:settlement_in_habitat': {'type': 'bool', 'default': False,
                            'description': 'settlement restricted to suitable habitat only',
-                           'level': self.CONFIG_LEVEL_BASIC}})   
+                           'level': self.CONFIG_LEVEL_BASIC}}) 
+        self._add_config({ 'drift:active_vertical_swimming': {'type': 'bool', 'default': False,
+                           'description': 'vertical movements correlated with the direction of inshore currents',
+                           'level': self.CONFIG_LEVEL_BASIC}}) 
+        self._add_config({ 'drift:persistence': {'type': 'float', 'default': 0.0,'min': 0.0, 'max': 1.0e10, 'units': 'none',
+                           'description': 'persistence of the vertical swimming when sampling the currents',
+                           'level': self.CONFIG_LEVEL_BASIC}})
+        self._add_config({ 'drift:vertical_velocity': {'type': 'float', 'default': 0.0,'min': 0.0, 'max': 1, 'units': 'm/s',
+                           'description': 'vertical swimming of larvae when advected away from habitat',
+                           'level': self.CONFIG_LEVEL_BASIC}})
+        self._add_config({ 'drift:maximum_depth': {'type': 'float', 'default': None,'min': -10000.0, 'max': -1.0, 'units': 'm',
+                           'description': 'maximum depth of the larvae',
+                           'level': self.CONFIG_LEVEL_BASIC}})
         
     def habitat(self, shapefile_location):
         """Suitable habitat in a shapefile"""
-        global multiShp
         polyShp = fiona.open(shapefile_location) # import shapefile
         polyList = []
-        polyProperties = []
+        self.centers = []
         for poly in polyShp: # create individual polygons from shapefile
-             polyGeom = Polygon(poly['geometry']['coordinates'][0]) 
-             polyList.append(polyGeom)
-             polyProperties.append(poly['properties'])
-        multiShp = MultiPolygon(polyList).buffer(0) # Aggregate polygons in a MultiPolygon object and buffer to fuse polygons and remove errors
-        return multiShp
-        
+             polyGeom = Polygon(poly['geometry']['coordinates'][0])
+             polyList.append(polyGeom) # Compile polygon in a list 
+             self.centers.append(polyGeom.centroid.coords[0]) # Compute centroid and return a [lon, lat] list
+        self.multiShp = MultiPolygon(polyList).buffer(0) # Aggregate polygons in a MultiPolygon object and buffer to fuse polygons and remove errors
+        return self.multiShp, self.centers
+    
+    # Haversine formula
+    #@numba.jit(nopython=True)
+    def haversine_distance(self, s_lng, s_lat, e_lng, e_lat):
+         # approximate radius of earth in km
+         R = 6373.0
+         s_lat = np.deg2rad(s_lat)                    
+         s_lng = np.deg2rad(s_lng)     
+         e_lat = np.deg2rad(e_lat)                       
+         e_lng = np.deg2rad(e_lng)
+         d = np.sin((e_lat - s_lat)/2)**2 + \
+             np.cos(s_lat)*np.cos(e_lat) * \
+             np.sin((e_lng - s_lng)/2)**2
+         return 2 * R * np.arcsin(np.sqrt(d))
+     
+    def nearest_habitat(self, lon, lat, centers):
+         dist = np.zeros(len(centers))
+         dist = self.haversine_distance(lon, lat, [centers[0] for centers in centers], [centers[1] for centers in centers])
+         nearest_center = np.argmin(dist)
+         return nearest_center, min(dist)
 
     def update_terminal_velocity(self, Tprofiles=None,
                                  Sprofiles=None, z_index=None):
         pass
-#       self.elements.terminal_velocity = W
 
     def sea_surface_height(self):
         '''fetches sea surface height for presently active elements
@@ -169,29 +200,7 @@ class BivalveLarvae(OceanDrift):
                 env['sea_surface_height'].astype('float32') 
         return sea_surface_height   
 
-    def update(self):
-        """Update positions and properties of buoyant particles."""
-
-        # Update element age
-        # self.elements.age_seconds += self.time_step.total_seconds()
-        # already taken care of in increase_age_and_retire() in basemodel.py
-
-        # Horizontal advection
-        self.advect_ocean_current()
-        
-        # Check for presence in habitat
-        if self.get_config('drift:settlement_in_habitat') is True:
-            self.interact_with_habitat()
-
-        # Turbulent Mixing or settling-only 
-        if self.get_config('drift:vertical_mixing') is True:
-            self.update_terminal_velocity()  #compute vertical velocities, two cases possible - constant, or same as pelagic egg
-            self.vertical_mixing()
-        else:  # Buoyancy
-            self.update_terminal_velocity()
-            self.vertical_buoyancy()
-
-        self.vertical_advection()     
+    
 
 
     def interact_with_seafloor(self):
@@ -346,22 +355,57 @@ class BivalveLarvae(OceanDrift):
            """        
            # Get age of particle
            old_enough = np.where(self.elements.age_seconds >= self.get_config('drift:min_settlement_age_seconds'))[0]
+           # Extract particles positions
            if len(old_enough) > 0 :
                pts_lon = self.elements.lon[old_enough]
                pts_lat = self.elements.lat[old_enough]
-               ## Check if position of particle is within boundaries of polygons
                for i in range(len(pts_lon)): # => faster version
                     pt = Point(pts_lon[i], pts_lat[i])
-                    in_habitat = pt.within(multiShp)
+                    in_habitat = pt.within(self.multiShp)
                     if in_habitat == True:
                         self.environment.land_binary_mask[old_enough[i]] = 6
                         
            # Deactivate elements that are within a polygon and old enough to settle
            # ** function expects an array of size consistent with self.elements.lon                
            self.deactivate_elements((self.environment.land_binary_mask == 6), reason='home_sweet_home')
-		   
-                       
+	
+                                
+    def vertical_swimming(self):
+           """"Vertical movements of the larvae when caught in inshore currents: larvae try to stay within the currents that move
+           them closer to shore, otherwise the larvae go up and down to sample the water column
+           """
+           # Check distance with nearest_habitat
+           pts_lon = self.elements.lon
+           pts_lat = self.elements.lat
+           pts_lon_old = self.previous_lon
+           pts_lat_old = self.previous_lat
+           for i in range(len(pts_lon)):
+               dist_old = self.nearest_habitat(pts_lon_old[i], pts_lat_old[i], self.centers)     
+               dist = self.nearest_habitat(pts_lon[i], pts_lat[i], self.centers)
+               if dist_old < dist:
+                   rand = random.uniform(0,1)
+                   movementr = self.elements.vertical_movement[i] if rand > 1/(2+self.get_config('drift:persistence')) else -1 if random.uniform(0,1) < 0.5 else 1 # Correlated random walk
+                   self.elements.vertical_movement[i] = movementr      
+                   self.elements.z[i] = self.elements.z[i] + movementr*self.get_config('drift:vertical_velocity')
+                   # Good, but some particles fly above water: the following code fixes that and reorients the larvae to swim down
+                   sea_surface_height = self.sea_surface_height()[i] # returns surface elevation at particle positions (>0 above msl, <0 below msl)
+                   # keep particle just below sea_surface_height (self.elements.z depth are negative down)
+                   if self.elements.z[i] >= sea_surface_height:
+                      self.elements.z[i] = sea_surface_height -0.01 # set particle z at 0.01m below sea_surface_height
+                      self.elements.vertical_movement[i] = - abs(movementr)
+                       #import pdb; pdb.set_trace()
+               else:
+                   pass
+                   
+    def maximum_depth(self):
+           '''Turn around larvae that are going too deep'''
+           if self.get_config('drift:maximum_depth') is not None:
+                too_deep = np.where(self.elements.z < self.get_config('drift:maximum_depth'))[0]
+                if len(too_deep) > 0:
+                    #import pdb; pdb.set_trace()
+                    self.elements.z[too_deep] = self.get_config('drift:maximum_depth')
         
+    
     def increase_age_and_retire(self):  # ##So that if max_age_seconds is exceeded particle is flagged as died
             """Increase age of elements, and retire if older than config setting.
 
@@ -390,6 +434,38 @@ class BivalveLarvae(OceanDrift):
                 if N is not None:
                     self.deactivate_elements(self.elements.lat > N, reason='outside')
                     
+ 
+    
+    def update(self):
+        """Update positions and properties of buoyant particles."""
+
+        # Update element age
+        # self.elements.age_seconds += self.time_step.total_seconds()
+        # already taken care of in increase_age_and_retire() in basemodel.py
+        
+        # Horizontal advection
+        self.advect_ocean_current()
+
+        # Check for presence in habitat
+        if self.get_config('drift:settlement_in_habitat') is True:
+            self.interact_with_habitat()
+
+        # Turbulent Mixing or settling-only 
+        if self.get_config('drift:vertical_mixing') is True:
+            self.update_terminal_velocity()  #compute vertical velocities, two cases possible - constant, or same as pelagic egg
+            self.vertical_mixing()
+        else:  # Buoyancy
+            pass    
+            #self.update_terminal_velocity()
+            #self.vertical_buoyancy()
+
+        if self.get_config('drift:active_vertical_swimming') is True:
+            self.vertical_swimming()
+
+        self.vertical_advection()
+        
+        self.maximum_depth()
+        
 # =============================================================================
 #     def lift_elements_to_seafloor(self):  ###Initiate settlement if particles touch bottom during competence period
 #         '''Lift any elements which are below seafloor and check age
