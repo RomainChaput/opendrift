@@ -13,7 +13,7 @@
 # 
 #  Under development - more testing to do
 # 
-# Modified: 31/05/2021. RChaput: Add settlement restricted to suitable habitat only
+# Modified: 31/05/2021. RChaput: Add settlement restricted to suitable habitat only, vertical swimming behavior, and maximum depth of dispersal
 
 
 import numpy as np
