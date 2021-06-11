@@ -405,7 +405,7 @@ class BivalveLarvae(OceanDrift):
                    rand = random.uniform(0,1)
                    movementr = self.elements.vertical_movement[i] if rand > 1/(2+self.get_config('drift:persistence')) else -1 if random.uniform(0,1) < 0.5 else 1 # Correlated random walk
                    self.elements.vertical_movement[i] = movementr      
-                   self.elements.z[i] = self.elements.z[i] + movementr*self.get_config('drift:vertical_velocity')
+                   self.elements.z[i] = self.elements.z[i] + movementr*self.get_config('drift:vertical_velocity') *self.time_step.total_seconds()
                    # Good, but some particles fly above water: the following code fixes that and reorients the larvae to swim down
                    sea_surface_height = self.sea_surface_height()[i] # returns surface elevation at particle positions (>0 above msl, <0 below msl)
                    # keep particle just below sea_surface_height (self.elements.z depth are negative down)
