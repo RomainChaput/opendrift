@@ -413,6 +413,9 @@ class BivalveLarvae(OceanDrift):
                       self.elements.z[i] = sea_surface_height -0.01 # set particle z at 0.01m below sea_surface_height
                       self.elements.vertical_movement[i] = - abs(movementr)
                        #import pdb; pdb.set_trace()
+		   if self.get_config('drift:maximum_depth') is not None:
+                      if self.elements.z[i] <= self.get_config('drift:maximum_depth'):
+                          self.elements.vertical_movement[i] = + abs(movementr)
                else:
                    pass
                    
