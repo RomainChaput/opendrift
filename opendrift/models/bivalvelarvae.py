@@ -16,18 +16,18 @@
 # Modified: 16/06/2021. RChaput: Add settlement restricted to suitable habitat only, vertical swimming behavior, and maximum depth of dispersal
 #
 # Lines to add to script to run the vertical swimming code:
-#################################
-## Type of settlement
-################################
+# ################################
+# # Type of settlement
+# ###############################
 #o.habitat('./habitat/Name_of_your_shapefile.shp') # Location of the shapefile with the habitat
 #o.set_config('drift:settlement_in_habitat', True) # Settlement restricted to habitat only, default=False
 #o.set_config('drift:max_age_seconds', 10*24*3600) # Maximum PLD
 #o.set_config('drift:min_settlement_age_seconds', 5*24*3600) # Beginning of the Competency period
 #o.set_config('general:seafloor_action', 'lift_to_seafloor')
 #
-################################
-## Vertical swimming
-################################
+# ###############################
+# # Vertical swimming
+# ###############################
 ## Need a null terminal_velocity
 #o.set_config('drift:active_vertical_swimming', True) # Correlated random walk across the water column when advected away from coastal habitats
 #o.set_config('drift:vertical_velocity', 0.0025) # Vertical swimming speed of the larvae: in meter/seconds
