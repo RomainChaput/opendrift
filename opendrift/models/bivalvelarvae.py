@@ -13,16 +13,16 @@
 # 
 #  Under development - more testing to do
 # 
-# Modified: 31/05/2021. RChaput: Add settlement restricted to suitable habitat only, vertical swimming behavior, and maximum depth of dispersal
+# Modified: 16/06/2021. RChaput: Add settlement restricted to suitable habitat only, vertical swimming behavior, and maximum depth of dispersal
 #
 # Lines to add to script to run the vertical swimming code:
 #################################
 ## Type of settlement
 ################################
-#multiShp, centers = o.habitat('./habitat/Settlement_area_mussels.shp') # Location of the shapefile with the habitat
-#o.set_config('drift:settlement_in_habitat', True)
-#o.set_config('drift:max_age_seconds', 10*24*3600) # 
-#o.set_config('drift:min_settlement_age_seconds', 5*24*3600)
+#o.habitat('./habitat/Name_of_your_shapefile.shp') # Location of the shapefile with the habitat
+#o.set_config('drift:settlement_in_habitat', True) # Settlement restricted to habitat only, default=False
+#o.set_config('drift:max_age_seconds', 10*24*3600) # Maximum PLD
+#o.set_config('drift:min_settlement_age_seconds', 5*24*3600) # Beginning of the Competency period
 #o.set_config('general:seafloor_action', 'lift_to_seafloor')
 #
 ################################
@@ -32,7 +32,7 @@
 #o.set_config('drift:active_vertical_swimming', True) # Correlated random walk across the water column when advected away from coastal habitats
 #o.set_config('drift:vertical_velocity', 0.0025) # Vertical swimming speed of the larvae: in meter/seconds
 #o.set_config('drift:maximum_depth', -50.0) # Maximum depth of larvae: negative in meters
-#o.set_config('drift:persistence', 0) # Control the persistence (memory) of the vertical movement to create a correlated random walk and sample the water column
+#o.set_config('drift:persistence', 50) # Control the persistence (memory) of the vertical movement to create a correlated random walk and sample the water column (0= pure random walk)
 
 
 import numpy as np
@@ -41,6 +41,7 @@ import logging; logger = logging.getLogger(__name__)
 from shapely.geometry import Polygon, Point, MultiPolygon # added for settlement in polygon only
 import fiona # to import habitat
 import random
+from sklearn.neighbors import BallTree
 
 
 # Defining the  element properties from Pelagicegg model
@@ -62,7 +63,7 @@ class BivalveLarvaeObj(Lagrangian3DArray):
                      'units': '',
                      'default': 0.}),
         ('vertical_movement', {'dtype': np.float32,
-                     'units': '',
+                     'units': 'none',
                      'default': 1.0}),
         ('terminal_velocity', {'dtype': np.float32,
                        'units': 'm/s',
@@ -165,37 +166,18 @@ class BivalveLarvae(OceanDrift):
         """Suitable habitat in a shapefile"""
         polyShp = fiona.open(shapefile_location) # import shapefile
         polyList = []
-        self.centers = []
+        centers = []
+        rad_centers = []
         for poly in polyShp: # create individual polygons from shapefile
              polyGeom = Polygon(poly['geometry']['coordinates'][0])
              polyList.append(polyGeom) # Compile polygon in a list 
-             self.centers.append(polyGeom.centroid.coords[0]) # Compute centroid and return a [lon, lat] list
+             centers.append(polyGeom.centroid.coords[0]) # Compute centroid and return a [lon, lat] list
+        for poly in range(len(centers)):
+            rad_centers.append([np.deg2rad(centers[poly][1]),np.deg2rad(centers[poly][0])])
         self.multiShp = MultiPolygon(polyList).buffer(0) # Aggregate polygons in a MultiPolygon object and buffer to fuse polygons and remove errors
-        return self.multiShp, self.centers
-    
-    # Haversine formula
-    #@numba.jit(nopython=True)
-    def haversine_distance(self, s_lng, s_lat, e_lng, e_lat):
-         # approximate radius of earth in km
-         R = 6373.0
-         s_lat = np.deg2rad(s_lat)                    
-         s_lng = np.deg2rad(s_lng)     
-         e_lat = np.deg2rad(e_lat)                       
-         e_lng = np.deg2rad(e_lng)
-         d = np.sin((e_lat - s_lat)/2)**2 + \
-             np.cos(s_lat)*np.cos(e_lat) * \
-             np.sin((e_lng - s_lng)/2)**2
-         return 2 * R * np.arcsin(np.sqrt(d))
-     
-    def nearest_habitat(self, lon, lat, centers):
-         dist = np.zeros(len(centers))
-         dist = self.haversine_distance(lon, lat, [centers[0] for centers in centers], [centers[1] for centers in centers])
-         nearest_center = np.argmin(dist)
-         return nearest_center, min(dist)
+        self.ball_centers = BallTree(rad_centers, metric='haversine') # Create a Ball Tree with the centroids for faster computation
+        return self.multiShp, self.ball_centers
 
-    def update_terminal_velocity(self, Tprofiles=None,
-                                 Sprofiles=None, z_index=None):
-        pass
 
     def sea_surface_height(self):
         '''fetches sea surface height for presently active elements
@@ -220,8 +202,6 @@ class BivalveLarvae(OceanDrift):
         return sea_surface_height   
 
     
-
-
     def interact_with_seafloor(self):
         """Seafloor interaction according to configuration setting"""
         # 
@@ -268,8 +248,7 @@ class BivalveLarvae(OceanDrift):
         surface = np.where(self.elements.z >= sea_surface_height)
         if len(surface[0]) > 0:
             self.elements.z[surface] = sea_surface_height[surface] -0.01 # set particle z at 0.01m below sea_surface_height
-
-
+	
 
     def interact_with_coastline(self,final = False): 
         """Coastline interaction according to configuration setting
@@ -368,6 +347,7 @@ class BivalveLarvae(OceanDrift):
                                          (self.elements.age_seconds >= self.get_config('drift:min_settlement_age_seconds')),
                                          reason='settled_on_coast')
     
+
     def interact_with_habitat(self):
            """Habitat interaction according to configuration setting
                The method checks if a particle is within the limit of an habitat before to allow settlement
@@ -393,38 +373,33 @@ class BivalveLarvae(OceanDrift):
            """"Vertical movements of the larvae when caught in inshore currents: larvae try to stay within the currents that move
            them closer to shore, otherwise the larvae go up and down to sample the water column
            """
-           # Check distance with nearest_habitat
-           pts_lon = self.elements.lon
-           pts_lat = self.elements.lat
-           pts_lon_old = self.previous_lon
-           pts_lat_old = self.previous_lat
-           for i in range(len(pts_lon)):
-               dist_old = self.nearest_habitat(pts_lon_old[i], pts_lat_old[i], self.centers)     
-               dist = self.nearest_habitat(pts_lon[i], pts_lat[i], self.centers)
-               if dist_old < dist:
+           # Check distance with nearest_habitat using the Ball tree algorithm
+           dist_old = self.ball_centers.query(list(zip(np.deg2rad(self.previous_lat), np.deg2rad(self.previous_lon))), k=1)
+           dist = self.ball_centers.query(list(zip(np.deg2rad(self.elements.lat), np.deg2rad(self.elements.lon))), k=1)
+           # Prompt vertical movement for particles moving away from the habitat
+           for i in range(len(self.elements.lat)):
+               if dist[0][i] > dist_old[0][i]:
                    rand = random.uniform(0,1)
                    movementr = self.elements.vertical_movement[i] if rand > 1/(2+self.get_config('drift:persistence')) else -1 if random.uniform(0,1) < 0.5 else 1 # Correlated random walk
                    self.elements.vertical_movement[i] = movementr      
-                   self.elements.z[i] = self.elements.z[i] + movementr*self.get_config('drift:vertical_velocity') *self.time_step.total_seconds()
-                   # Good, but some particles fly above water: the following code fixes that and reorients the larvae to swim down
+                   self.elements.z[i] = self.elements.z[i] + movementr*self.get_config('drift:vertical_velocity') * self.time_step.total_seconds()
+                   # Control min and max depth of particles
                    sea_surface_height = self.sea_surface_height()[i] # returns surface elevation at particle positions (>0 above msl, <0 below msl)
-                   # keep particle just below sea_surface_height (self.elements.z depth are negative down)
                    if self.elements.z[i] >= sea_surface_height:
-                      self.elements.z[i] = sea_surface_height -0.01 # set particle z at 0.01m below sea_surface_height
+                      self.elements.z[i] = sea_surface_height - 0.01 # set particle z at 0.01m below sea_surface_height
                       self.elements.vertical_movement[i] = - abs(movementr)
-                       #import pdb; pdb.set_trace()
-		   if self.get_config('drift:maximum_depth') is not None:
+                   if self.get_config('drift:maximum_depth') is not None:
                       if self.elements.z[i] <= self.get_config('drift:maximum_depth'):
                           self.elements.vertical_movement[i] = + abs(movementr)
                else:
                    pass
                    
+               
     def maximum_depth(self):
            '''Turn around larvae that are going too deep'''
            if self.get_config('drift:maximum_depth') is not None:
                 too_deep = np.where(self.elements.z < self.get_config('drift:maximum_depth'))[0]
                 if len(too_deep) > 0:
-                    #import pdb; pdb.set_trace()
                     self.elements.z[too_deep] = self.get_config('drift:maximum_depth')
         
     
@@ -476,7 +451,7 @@ class BivalveLarvae(OceanDrift):
         if self.get_config('drift:vertical_mixing') is True:
             self.update_terminal_velocity()  #compute vertical velocities, two cases possible - constant, or same as pelagic egg
             self.vertical_mixing()
-        else:  # Buoyancy   
+        else:  # Buoyancy
             self.update_terminal_velocity()
             self.vertical_buoyancy()
 
