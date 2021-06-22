@@ -13,7 +13,8 @@
 # 
 #  Under development - more testing to do
 # 
-# Modified: 16/06/2021. RChaput: Add settlement restricted to suitable habitat only, vertical swimming behavior, and maximum depth of dispersal
+# Modified: 16/06/2021. RChaput: Add settlement restricted to suitable habitat only, vertical swimming behavior, and maximum depth of dispersal.
+#			         Add Haliotis iris specific behavior: o.set_config('drift:Haliotis_iris', True)
 #
 # Lines to add to script to run the vertical swimming code:
 # ################################
@@ -28,11 +29,12 @@
 # ###############################
 # # Vertical swimming
 # ###############################
-## Need a null terminal_velocity
+# # Need a null terminal_velocity
 #o.set_config('drift:active_vertical_swimming', True) # Correlated random walk across the water column when advected away from coastal habitats
 #o.set_config('drift:vertical_velocity', 0.0025) # Vertical swimming speed of the larvae: in meter/seconds
 #o.set_config('drift:maximum_depth', -50.0) # Maximum depth of larvae: negative in meters
 #o.set_config('drift:persistence', 50) # Control the persistence (memory) of the vertical movement to create a correlated random walk and sample the water column (0= pure random walk)
+
 
 
 import numpy as np
@@ -161,6 +163,10 @@ class BivalveLarvae(OceanDrift):
         self._add_config({ 'drift:maximum_depth': {'type': 'float', 'default': None,'min': -10000.0, 'max': -1.0, 'units': 'm',
                            'description': 'maximum depth of the larvae',
                            'level': self.CONFIG_LEVEL_BASIC}})
+        self._add_config({ 'drift:Haliotis_iris': {'type': 'bool', 'default': False,
+                           'description': 'turns on a sinking behavior for the first 12 hours of dispersal',
+                           'level': self.CONFIG_LEVEL_BASIC}})
+
         
     def habitat(self, shapefile_location):
         """Suitable habitat in a shapefile"""
@@ -177,7 +183,7 @@ class BivalveLarvae(OceanDrift):
         self.multiShp = MultiPolygon(polyList).buffer(0) # Aggregate polygons in a MultiPolygon object and buffer to fuse polygons and remove errors
         self.ball_centers = BallTree(rad_centers, metric='haversine') # Create a Ball Tree with the centroids for faster computation
         return self.multiShp, self.ball_centers
-
+    
 
     def sea_surface_height(self):
         '''fetches sea surface height for presently active elements
@@ -202,6 +208,7 @@ class BivalveLarvae(OceanDrift):
         return sea_surface_height   
 
     
+
     def interact_with_seafloor(self):
         """Seafloor interaction according to configuration setting"""
         # 
@@ -248,7 +255,8 @@ class BivalveLarvae(OceanDrift):
         surface = np.where(self.elements.z >= sea_surface_height)
         if len(surface[0]) > 0:
             self.elements.z[surface] = sea_surface_height[surface] -0.01 # set particle z at 0.01m below sea_surface_height
-	
+
+
 
     def interact_with_coastline(self,final = False): 
         """Coastline interaction according to configuration setting
@@ -347,7 +355,6 @@ class BivalveLarvae(OceanDrift):
                                          (self.elements.age_seconds >= self.get_config('drift:min_settlement_age_seconds')),
                                          reason='settled_on_coast')
     
-
     def interact_with_habitat(self):
            """Habitat interaction according to configuration setting
                The method checks if a particle is within the limit of an habitat before to allow settlement
@@ -395,6 +402,14 @@ class BivalveLarvae(OceanDrift):
                    pass
                    
                
+    def haliotis_iris_sinking(self):
+        ''''Haliotis iris larvae sink durign the first 12 hours of their life, 
+        then swim toward the surface'''
+        young_haliotis_iris = np.where(self.elements.age_seconds <= 12*3600)[0]
+        if len(young_haliotis_iris) > 0:
+            self.elements.z[young_haliotis_iris] = self.elements.z[young_haliotis_iris] - 2*abs(self.elements.terminal_velocity) * self.time_step.total_seconds()
+            
+     
     def maximum_depth(self):
            '''Turn around larvae that are going too deep'''
            if self.get_config('drift:maximum_depth') is not None:
@@ -446,6 +461,10 @@ class BivalveLarvae(OceanDrift):
         # Check for presence in habitat
         if self.get_config('drift:settlement_in_habitat') is True:
             self.interact_with_habitat()
+            
+        # Additional module for Haliotis iris
+        if self.get_config('drift:Haliotis_iris') is True:
+            self.haliotis_iris_sinking()
 
         # Turbulent Mixing or settling-only 
         if self.get_config('drift:vertical_mixing') is True:
