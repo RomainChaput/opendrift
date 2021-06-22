@@ -407,7 +407,7 @@ class BivalveLarvae(OceanDrift):
         then swim toward the surface'''
         young_haliotis_iris = np.where(self.elements.age_seconds <= 12*3600)[0]
         if len(young_haliotis_iris) > 0:
-            self.elements.z[young_haliotis_iris] = self.elements.z[young_haliotis_iris] - 2*abs(self.elements.terminal_velocity) * self.time_step.total_seconds()
+            self.elements.z[young_haliotis_iris] = self.elements.z[young_haliotis_iris] - 2*abs(self.elements.terminal_velocity[young_haliotis_iris]) * self.time_step.total_seconds()
             
      
     def maximum_depth(self):
