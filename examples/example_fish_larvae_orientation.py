@@ -70,7 +70,7 @@ z = np.random.uniform(-0.5,-8,size=tot_parts) # generate random depth
 
 # Seed particles
 for i in range(len(times)):
-	o.seed_elements(plon, plat, number=tot_parts, z=z, time = times[i], terminal_velocity=0.001)
+	o.seed_elements(plon, plat, number=tot_parts, z=z, time = times[i], terminal_velocity=0.0)
 
 # seed
 o.set_config('seed:ocean_only', True) # keep only particles from the "frame" that are on the ocean
