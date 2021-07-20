@@ -41,7 +41,7 @@ o.set_config('general:use_auto_landmask', False) # prevent opendrift from making
 
 # Define the starting position of the particles
 nb_parts = 1
-points = np.loadtxt('./Release_centroid_nat_dist_paua.xyz', delimiter='\t', dtype=str)
+points = np.loadtxt('./Release_centroid_nat_dist_paua.xyz', delimiter='\t', dtype=str) # Text file with lon and lat of release points
 plon = points[:,0].astype(np.float)
 plat = points[:,1].astype(np.float)
 tot_parts = nb_parts * len(plon) # total number of particles released
