@@ -4,7 +4,7 @@
 # For the moment the only orientation mechanism is the direct orientation: larvae orient and swim toward the nearest habitat using a biased correlated random walk and settle on the habitat after the beginning of the competency period.
 # More orientation behaviors will be added
 #
-# Sources for the algorithm of orientation: Codling et al., 2004, Staaterman et al., 2012, and Fisher and Bellwood, 2003. See PhD dissertation R Chaput 2021
+# Sources for the algorithm of orientation: Codling et al., 2004, Staaterman et al., 2012, and Fisher and Bellwood, 2003. See PhD dissertation R Chaput 2020
 # See example_fish_larvae_orientation.py for an example script to run the code
 #  
 # Author : Romain Chaput
