@@ -484,7 +484,7 @@ class FishLarvaeOrient(OceanDrift):
 			""""Orientation toward a fixed cardinal direction
 			"""
 			# Compute heading
-			thetaCard = np.deg2rad*self.get_config('biology:cardinal_heading')
+			thetaCard = np.deg2rad(self.get_config('biology:cardinal_heading'))
 			# Check if the particles are old enough to orient
 			old_enough = np.where(self.elements.age_seconds >= self.get_config('biology:beginning_orientation'))[0]
 			if len(old_enough) > 0 :
