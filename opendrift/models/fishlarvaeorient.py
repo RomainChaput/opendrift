@@ -1,15 +1,21 @@
 # This file is intended for the orientation of fish larvae and developed from the models bivalvelarvae.py and larvalfish.py 
-# It introduces different orientation behaviors for fish larvae.
 # 
-# For the moment the only orientation mechanism is the direct orientation: larvae orient and swim toward the nearest habitat using a biased correlated random walk and settle on the habitat after the beginning of the competency period.
-# More orientation behaviors will be added
+# This code introduces different orientation behaviors for fish larvae:
+# 1. Direct orientation: Competent ('old enough to orient') larvae swim in the direction of the nearest habitat (represented by polygons in a shapefile) if they are close enough to detect it (controlled by user input). Based on Staaterman et al., 2012 and Codling et al., 2004.
+# 2. Rheotaxis orientation: Countercurrent swimming. Competent larvae swim against the direction of the current. Larvae swim at lower or equal speed as the currents, depending on their swimming speed. Larvae cannot swim faster than the currents.
+# 3. Cardinal orientation: Competent larvae swim in a pre-determine direction (controlled by user input).
+# 4. Continuous orientation: Type 1 => Rheotaxis orientation when larvae are offshore, then reef orientation when they are close enough to the reefs. OR. Type 2=> Cardinal orientation then reef orientation. User input cardinal heading, distance of reef detection, and beginning of orientation.
+#
+# Common to all orientation behavior: horizontal swimming speed developing with age of the larvae. Coded following the relationship exposed in Fisher and Bellwood, 2003.
+# This code also introduces Ontogenetic Vertical Migration (OVM) where larvae swim to different depth following their development (see Irisson et al., 2010 for distribution examples).
+# Finally, the settlement of larvae can be restricted to a specific habitat (polygons in shapefile).
 #
 # Sources for the algorithm of orientation: Codling et al., 2004, Staaterman et al., 2012, and Fisher and Bellwood, 2003. See PhD dissertation R Chaput 2020
 # See example_fish_larvae_orientation.py for an example script to run the code
 #  
 # Author : Romain Chaput
 # 
-#  Under development - first draft: 25/06/2021 - Last update: 20/07/2021
+#  Under development - first draft: 25/06/2021 - Last update: 17/08/2021
 
 import numpy as np
 from opendrift.models.oceandrift import OceanDrift, Lagrangian3DArray
@@ -108,17 +114,21 @@ class FishLarvaeOrient(OceanDrift):
 		self.set_config('general:seafloor_action', 'lift_to_seafloor')
 
 		##add config spec
+		self._add_config({'biology:orientation': {'type': 'enum', 'default': 'none',
+                'enum': ['none', 'direct', 'rheotaxis', 'cardinal','continuous_1','continuous_2'],
+                'description': '"direct": biased correlated random walk toward the nearest habitat; "rheotaxis": swim against the currents; "cardinal": swim in a pre-determined direction; "continuous_1": mix of rheotaxis and direct orientation; "continuous_2": mix of cardinal and direct orientation; "none": no orientation behavior.',
+                'level': self.CONFIG_LEVEL_ADVANCED},
 		self._add_config({ 'biology:min_settlement_age_seconds': {'type': 'float', 'default': 0.0,'min': 0.0, 'max': 1.0e10, 'units': 'seconds',
 						   'description': 'minimum age in seconds at which larvae can start to settle on habitat, or seabed or stick to shoreline',
 						   'level': self.CONFIG_LEVEL_BASIC}})
 		self._add_config({ 'biology:settlement_in_habitat': {'type': 'bool', 'default': False,
 						   'description': 'settlement restricted to suitable habitat only',
 						   'level': self.CONFIG_LEVEL_BASIC}})
-		self._add_config({ 'biology:direct_orientation': {'type': 'bool', 'default': False,
-						   'description': 'biased correlated random walk toward the nearest habitat',
-						   'level': self.CONFIG_LEVEL_BASIC}})
 		self._add_config({ 'biology:OVM': {'type': 'bool', 'default': False,
 						   'description': 'Ontogenetic Vertical Migration',
+						   'level': self.CONFIG_LEVEL_BASIC}})
+		self._add_config({ 'biology:cardinal_heading': {'type': 'float', 'default': 0.0,'min': -180.0, 'max': 180.0, 'units': 'degrees East',
+						   'description': 'cardinal orientation of the larvae during dispersal (0.0 degree = East)',
 						   'level': self.CONFIG_LEVEL_BASIC}})
 		self._add_config({ 'biology:max_orient_distance': {'type': 'float', 'default': 0.0,'min': 0.0, 'max': 1.0e10, 'units': 'meters',
 						   'description': 'maximum detection distance of the habitat for orientation',
@@ -136,16 +146,19 @@ class FishLarvaeOrient(OceanDrift):
 						   #'description': 'the depth a species is expected to inhabit during the night time, in meters, negative down',
 						   #'level': self.CONFIG_LEVEL_BASIC}})
 		self._add_config({ 'biology:vertical_migration_speed_constant': {'type': 'float', 'default': None,'min': 0.0, 'max': 100.0, 'units': 'm/s',
-						   'description': 'Constant vertical migration rate (m/s), if None, use values from update_terminal_velocity()',
+						   'description': 'Constant vertical migration rate (m/s), if None, uses values from update_terminal_velocity()',
 						   'level': self.CONFIG_LEVEL_BASIC}})			
 		self._add_config({ 'drift:maximum_depth': {'type': 'float', 'default': None,'min': -10000.0, 'max': -1.0, 'units': 'm',
 						   'description': 'maximum depth of the larvae',
+						   'level': self.CONFIG_LEVEL_BASIC}})
+		self._add_config({ 'biology:beginning_orientation': {'type': 'float', 'default': 0.0,'min': 0.0, 'max': 1.0e10, 'units': 'seconds',
+						   'description': 'Beginning of the orientation of the larvae in seconds (can correspond to the flexion stage)',
 						   'level': self.CONFIG_LEVEL_BASIC}})
 		self._add_config({ 'biology:pre_flexion': {'type': 'float', 'default': 0.0,'min': 0.0, 'max': 1.0e10, 'units': 'seconds',
 						   'description': 'age of the pre-flexion stage transition in seconds',
 						   'level': self.CONFIG_LEVEL_BASIC}})	
 		self._add_config({ 'biology:flexion': {'type': 'float', 'default': 0.0,'min': 0.0, 'max': 1.0e10, 'units': 'seconds',
-						   'description': 'Flexion stage of the larvae: start the orientation',
+						   'description': 'Flexion stage of the larvae in seconds',
 						   'level': self.CONFIG_LEVEL_BASIC}})
 		self._add_config({ 'biology:post_flexion': {'type': 'float', 'default': 0.0,'min': 0.0, 'max': 1.0e10, 'units': 'seconds',
 						   'description': 'age of the post-flexion stage transition in seconds',
@@ -423,21 +436,24 @@ class FishLarvaeOrient(OceanDrift):
 	# IBM: horizontal and vertical movements
 	#####################################################################################################################
 		
+	def reset_horizontal_swimming(self):
+			# Create a  vector for swimming movement
+			u_velocity = np.array([0.0]*len(self.elements.lat))
+			v_velocity = np.array([0.0]*len(self.elements.lon))
+			return u_velocity, v_velocity
+	
+	
 	def direct_orientation_habitat(self):
 		   """"Biased correlated random walk toward the nearest habitat. 
 		   Equations described in Codling et al., 2004 and Staaterman et al., 2012
 		   """
-		   # Create a  vector for swimming movement
-		   u_velocity = np.array([0.0]*len(self.elements.lat))
-		   v_velocity = np.array([0.0]*len(self.elements.lon))
 		   # Check if the particles are old enough to orient
-		   old_enough = np.where(self.elements.age_seconds >= self.get_config('biology:flexion'))[0]
+		   old_enough = np.where(self.elements.age_seconds >= self.get_config('biology:beginning_orientation'))[0]
 		   if len(old_enough) > 0 :
 				    habitat_near, habitat_id = self.ball_centers.query(list(zip(np.deg2rad(self.elements.lat[old_enough]), np.deg2rad(self.elements.lon[old_enough]))), k=1)
 				    for i in range(len(self.elements.lat[old_enough])):
 					    if habitat_near[i][0]*6371 > self.get_config('biology:max_orient_distance'):
-						    u_velocity[old_enough][i] = 0.0
-						    v_velocity[old_enough][i] = 0.0
+						    pass
 					    else:
 						    pt_lon = self.elements.lon[old_enough][i]
 						    pt_lat = self.elements.lat[old_enough][i]
@@ -462,14 +478,127 @@ class FishLarvaeOrient(OceanDrift):
 						    #import pdb; pdb.set_trace()  
 							
 		   self.update_positions(u_velocity , v_velocity)
-		   
-		   
+	
+	
+	def cardinal_orientation(self):
+			""""Orientation toward a fixed cardinal direction
+			"""
+			# Compute heading
+			thetaCard = np.deg2rad*self.get_config('biology:cardinal_heading')
+			# Check if the particles are old enough to orient
+			old_enough = np.where(self.elements.age_seconds >= self.get_config('biology:beginning_orientation'))[0]
+			if len(old_enough) > 0 :
+				for i in range(len(self.elements.lat[old_enough])):
+				# Computing preferred direction
+				ti  = np.random.vonmises(0, 5)
+				theta = thetaCard + ti
+				
+				# Compute u and v velocity
+				u_velocity[old_enough[i]] = self.swimming_speed(self.elements.age_seconds[old_enough][i])*np.cos(theta)
+				v_velocity[old_enough[i]] = self.swimming_speed(self.elements.age_seconds[old_enough][i])*np.sin(theta)
+			
+			self.update_positions(u_velocity , v_velocity)
+		
+	
+	def rheotaxis_orientation(self):
+			""""Orientation against the direction of the local currents
+			"""			
+			# Check if the particles are old enough to orient
+			old_enough = np.where(self.elements.age_seconds >= self.get_config('biology:beginning_orientation'))[0]
+			if len(old_enough) > 0 :			
+				for i in range(len(self.elements.lat[old_enough])):
+				# Compute randomness of direction
+				ti  = np.random.vonmises(0, 5)
+				#Compute rheotaxis heading
+				thetaRheo = -np.arctan2(self.elements.y_vel[old_enough[i]], self.elements.x_vel[old_enough[i]])
+				theta = thetaRheo + ti
+				
+				# Compute current speed absolute value
+				uv = np.sqrt(self.elements.x_vel[old_enough][i]**2 + self.elements.y_vel[old_enough][i]**2)
+				# Compute norm of swimming speed
+				norm_swim = np.abs(self.swimming_speed(self.elements.age_seconds[old_enough][i]))
+				
+				if norm_swim < uv:
+					# Compute u and v velocity
+					u_velocity[old_enough[i]] = self.swimming_speed(self.elements.age_seconds[old_enough][i])*np.cos(theta)
+					v_velocity[old_enough[i]] = self.swimming_speed(self.elements.age_seconds[old_enough][i])*np.sin(theta)
+				else:
+					u_velocity[old_enough[i]] = uv * cos(theta)
+					v_velocity[old_enough[i]] = uv * sin(theta)
+			
+			self.update_positions(u_velocity , v_velocity)
+
+
+	def mix_orientation(self):
+			"""Continuous orientation of the larvae using either rheotaxis orientation and direct orientation when getting closer to the reefs, 
+			or cardinal orientation and direct orientation when getting closer to the reefs
+				"""
+			# Check if the particles are old enough to orient
+			old_enough = np.where(self.elements.age_seconds >= self.get_config('biology:beginning_orientation'))[0]
+			if len(old_enough) > 0 :
+				habitat_near, habitat_id = self.ball_centers.query(list(zip(np.deg2rad(self.elements.lat[old_enough]), np.deg2rad(self.elements.lon[old_enough]))), k=1)
+				for i in range(len(self.elements.lat[old_enough])):
+					if habitat_near[i][0]*6371 > self.get_config('biology:max_orient_distance'):
+						if self.get_config('biology:orientation')=='continuous_1':
+							# Compute randomness of direction
+							ti  = np.random.vonmises(0, 5)
+							#Compute rheotaxis heading
+							thetaRheo = -np.arctan2(self.elements.y_vel[old_enough[i]], self.elements.x_vel[old_enough[i]])
+							theta = thetaRheo + ti
+				
+							# Compute current speed absolute value
+							uv = np.sqrt(self.elements.x_vel[old_enough][i]**2 + self.elements.y_vel[old_enough][i]**2)
+							# Compute norm of swimming speed
+							norm_swim = np.abs(self.swimming_speed(self.elements.age_seconds[old_enough][i]))
+				
+							if norm_swim < uv:
+								# Compute u and v velocity
+								u_velocity[old_enough[i]] = self.swimming_speed(self.elements.age_seconds[old_enough][i])*np.cos(theta)
+								v_velocity[old_enough[i]] = self.swimming_speed(self.elements.age_seconds[old_enough][i])*np.sin(theta)
+							else:
+								u_velocity[old_enough[i]] = uv * cos(theta)
+								v_velocity[old_enough[i]] = uv * sin(theta)
+								
+						if self.get_config('biology:orientation')=='continuous_2':
+							# Computing preferred direction
+							ti  = np.random.vonmises(0, 5)
+							theta = thetaCard + ti
+				
+							# Compute u and v velocity
+							u_velocity[old_enough[i]] = self.swimming_speed(self.elements.age_seconds[old_enough][i])*np.cos(theta)
+							v_velocity[old_enough[i]] = self.swimming_speed(self.elements.age_seconds[old_enough][i])*np.sin(theta)
+							
+					else:
+						pt_lon = self.elements.lon[old_enough][i]
+						pt_lat = self.elements.lat[old_enough][i]
+						pt_lon_old = self.previous_lon[old_enough][i]
+						pt_lat_old = self.previous_lat[old_enough][i]
+						# Case where particle close enough and old enough to orient
+						# Strength of orientation (depend on distance to the habitat)
+						d = 1 - (habitat_near[i][0]*6371/self.get_config('biology:max_orient_distance'))
+						# Compute direction of nearest habitat. See Staaterman et al., 2012
+						theta_pref = - self.haversine_angle(pt_lon, pt_lat, self.centers_habitat[habitat_id[i][0]][0], self.centers_habitat[habitat_id[i][0]][1]) 
+						# Compute direction from previous timestep
+						theta_current = self.haversine_angle(pt_lon_old, pt_lat_old, pt_lon, pt_lat)
+						# Mean turning angle
+						mu = -d * (theta_current - theta_pref)
+						# New direction randomly selected in Von Mises distribution
+						ti  = np.random.vonmises(0, 5) # First parameter: mu, second parameter: kappa (control the uncertainty of orientation) 
+						theta = ti - theta_current - mu
+						
+						# Compute u and v velocity
+						u_velocity[old_enough[i]] = self.swimming_speed(self.elements.age_seconds[old_enough][i])*np.cos(theta)
+						v_velocity[old_enough[i]] = self.swimming_speed(self.elements.age_seconds[old_enough][i])*np.sin(theta)
+						
+			self.update_positions(u_velocity , v_velocity)
+	
+	
 	def swimming_speed(self, age):
-		''' Compute horizontal swimming speed of the larvae
-		Presented in Fisher and Bellwood (2003) and used in Staaterman et al. (2012)
-		'''		
-		hor_swimming_speed = (self.get_config('biology:hatch_swimming_speed') + (self.get_config('biology:settle_swimming_speed') - self.get_config('biology:hatch_swimming_speed'))	** (np.log(age)/np.log(self.get_config('drift:max_age_seconds'))) )	/ 100
-		return hor_swimming_speed
+			''' Compute horizontal swimming speed of the larvae
+			Presented in Fisher and Bellwood (2003) and used in Staaterman et al. (2012)
+			'''		
+			hor_swimming_speed = (self.get_config('biology:hatch_swimming_speed') + (self.get_config('biology:settle_swimming_speed') - self.get_config('biology:hatch_swimming_speed'))	** (np.log(age)/np.log(self.get_config('drift:max_age_seconds'))) )	/ 100
+			return hor_swimming_speed
 	
 	
 	def vertical_swimming(self): # Not used for the moment
@@ -553,9 +682,21 @@ class FishLarvaeOrient(OceanDrift):
 
 		## Horizontal advection
 		self.advect_ocean_current() # Independent from age
-		# Horizontal swimming
-		if self.get_config('biology:direct_orientation') is True:
-			self.direct_orientation_habitat() # self.update_positions in the function direct_orientation_habitat
+		# Orientation behaviors
+		if self.get_config('biology:orientation')=='none':
+			pass
+		else:
+			self.reset_horizontal_swimming()
+			if self.get_config('biology:orientation')=='direct':
+				self.direct_orientation_habitat() # orientation toward the nearest reef
+			if self.get_config('biology:orientation')=='rheotaxis':
+				self.rheotaxis_orientation() # orientation against the currents
+			if self.get_config('biology:orientation')=='cardinal':
+				self.cardinal_orientation() # orientation toward pre-determined direction
+			if self.get_config('biology:orientation')=='continuous_1':
+				self.mix_orientation() # continuous orientation using rheotaxis and direct orientation
+			if self.get_config('biology:orientation')=='continuous_2':
+				self.mix_orientation() # continuous orientation using cardinal and direct orientation
 		
 		## Update vertical position
 		self.vertical_advection()   
@@ -575,4 +716,3 @@ class FishLarvaeOrient(OceanDrift):
 			
 		## Mortality
 		self.larval_mortality()
-			
