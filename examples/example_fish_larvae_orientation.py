@@ -129,15 +129,15 @@ o.set_config('drift:maximum_depth', -100.0) # maximum depth of dispersal in mete
 ###############################
 # Larval orientation toward the nearest habitat
 o.habitat('./habitat/Polygons_reefs.shp') # Location of the shapefile with the habitat
-o.set_config('biology:direct_orientation', True) # orient toward the nearest reef
-o.set_config('biology:flexion', 15.0*24*3600)# Beginning of the flexion stage. Beginning of the orientation => if using OVM, values must agree
+o.set_config('biology:orientation', 'direct') # orientation of the larvae: direct, rheotaxis, cardinal, continuous_1, continuous_2, or none
+o.set_config('biology:beginning_orientation', 15.0*24*3600)# Beginning of the flexion stage. Beginning of the orientation => if using OVM, values must agree
 o.set_config('biology:max_orient_distance', 10.0)# Orientation distance in kilometers. Maximum distance at which the habitat is detected
+o.set_config('biology:cardinal_heading', 180.0)# Cardinal heading for larval orientation when 'cardinal' option is selected
 # Horizontal swimming speed:
 o.set_config('biology:hatch_swimming_speed', 2.0)# Swimming speed at hatching, in cm/s
 o.set_config('biology:settle_swimming_speed', 30.0)# Swimming speed at settlement, in cm/s
 
 o.list_config()
-# o.list_configspec()
 
 ###############################
 # RUN 
