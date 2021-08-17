@@ -114,10 +114,10 @@ class FishLarvaeOrient(OceanDrift):
 		self.set_config('general:seafloor_action', 'lift_to_seafloor')
 
 		##add config spec
-		self._add_config({'biology:orientation': {'type': 'enum', 'default': 'none',
+		self._add_config({ 'biology:orientation': {'type': 'enum', 'default': 'none',
                 'enum': ['none', 'direct', 'rheotaxis', 'cardinal','continuous_1','continuous_2'],
                 'description': '"direct": biased correlated random walk toward the nearest habitat; "rheotaxis": swim against the currents; "cardinal": swim in a pre-determined direction; "continuous_1": mix of rheotaxis and direct orientation; "continuous_2": mix of cardinal and direct orientation; "none": no orientation behavior.',
-                'level': self.CONFIG_LEVEL_ADVANCED},
+                'level': self.CONFIG_LEVEL_ADVANCED}})
 		self._add_config({ 'biology:min_settlement_age_seconds': {'type': 'float', 'default': 0.0,'min': 0.0, 'max': 1.0e10, 'units': 'seconds',
 						   'description': 'minimum age in seconds at which larvae can start to settle on habitat, or seabed or stick to shoreline',
 						   'level': self.CONFIG_LEVEL_BASIC}})
@@ -438,9 +438,9 @@ class FishLarvaeOrient(OceanDrift):
 		
 	def reset_horizontal_swimming(self):
 			# Create a  vector for swimming movement
-			u_velocity = np.array([0.0]*len(self.elements.lat))
-			v_velocity = np.array([0.0]*len(self.elements.lon))
-			return u_velocity, v_velocity
+			self.u_velocity = np.array([0.0]*len(self.elements.lat))
+			self.v_velocity = np.array([0.0]*len(self.elements.lon))
+			return self.u_velocity, self.v_velocity
 	
 	
 	def direct_orientation_habitat(self):
@@ -473,11 +473,11 @@ class FishLarvaeOrient(OceanDrift):
 						    theta = ti - theta_current - mu
 						
 						    # Compute u and v velocity
-						    u_velocity[old_enough[i]] = self.swimming_speed(self.elements.age_seconds[old_enough][i])*np.cos(theta)
-						    v_velocity[old_enough[i]] = self.swimming_speed(self.elements.age_seconds[old_enough][i])*np.sin(theta) 
+						    self.u_velocity[old_enough[i]] = self.swimming_speed(self.elements.age_seconds[old_enough][i])*np.cos(theta)
+						    self.v_velocity[old_enough[i]] = self.swimming_speed(self.elements.age_seconds[old_enough][i])*np.sin(theta) 
 						    #import pdb; pdb.set_trace()  
 							
-		   self.update_positions(u_velocity , v_velocity)
+		   self.update_positions(self.u_velocity , self.v_velocity)
 	
 	
 	def cardinal_orientation(self):
@@ -489,15 +489,15 @@ class FishLarvaeOrient(OceanDrift):
 			old_enough = np.where(self.elements.age_seconds >= self.get_config('biology:beginning_orientation'))[0]
 			if len(old_enough) > 0 :
 				for i in range(len(self.elements.lat[old_enough])):
-				# Computing preferred direction
-				ti  = np.random.vonmises(0, 5)
-				theta = thetaCard + ti
+					# Computing preferred direction
+					ti  = np.random.vonmises(0, 5)
+					theta = thetaCard + ti
 				
-				# Compute u and v velocity
-				u_velocity[old_enough[i]] = self.swimming_speed(self.elements.age_seconds[old_enough][i])*np.cos(theta)
-				v_velocity[old_enough[i]] = self.swimming_speed(self.elements.age_seconds[old_enough][i])*np.sin(theta)
+					# Compute u and v velocity
+					self.u_velocity[old_enough[i]] = self.swimming_speed(self.elements.age_seconds[old_enough][i])*np.cos(theta)
+					self.v_velocity[old_enough[i]] = self.swimming_speed(self.elements.age_seconds[old_enough][i])*np.sin(theta)
 			
-			self.update_positions(u_velocity , v_velocity)
+			self.update_positions(self.u_velocity , self.v_velocity)
 		
 	
 	def rheotaxis_orientation(self):
@@ -507,26 +507,26 @@ class FishLarvaeOrient(OceanDrift):
 			old_enough = np.where(self.elements.age_seconds >= self.get_config('biology:beginning_orientation'))[0]
 			if len(old_enough) > 0 :			
 				for i in range(len(self.elements.lat[old_enough])):
-				# Compute randomness of direction
-				ti  = np.random.vonmises(0, 5)
-				#Compute rheotaxis heading
-				thetaRheo = -np.arctan2(self.elements.y_vel[old_enough[i]], self.elements.x_vel[old_enough[i]])
-				theta = thetaRheo + ti
+					# Compute randomness of direction
+					ti  = np.random.vonmises(0, 5)
+					#Compute rheotaxis heading
+					thetaRheo = -np.arctan2(self.elements.y_vel[old_enough[i]], self.elements.x_vel[old_enough[i]])
+					theta = thetaRheo + ti
 				
-				# Compute current speed absolute value
-				uv = np.sqrt(self.elements.x_vel[old_enough][i]**2 + self.elements.y_vel[old_enough][i]**2)
-				# Compute norm of swimming speed
-				norm_swim = np.abs(self.swimming_speed(self.elements.age_seconds[old_enough][i]))
+					# Compute current speed absolute value
+					uv = np.sqrt(self.elements.x_vel[old_enough][i]**2 + self.elements.y_vel[old_enough][i]**2)
+					# Compute norm of swimming speed
+					norm_swim = np.abs(self.swimming_speed(self.elements.age_seconds[old_enough][i]))
 				
-				if norm_swim < uv:
-					# Compute u and v velocity
-					u_velocity[old_enough[i]] = self.swimming_speed(self.elements.age_seconds[old_enough][i])*np.cos(theta)
-					v_velocity[old_enough[i]] = self.swimming_speed(self.elements.age_seconds[old_enough][i])*np.sin(theta)
-				else:
-					u_velocity[old_enough[i]] = uv * cos(theta)
-					v_velocity[old_enough[i]] = uv * sin(theta)
+					if norm_swim < uv:
+						# Compute u and v velocity
+						self.u_velocity[old_enough[i]] = self.swimming_speed(self.elements.age_seconds[old_enough][i])*np.cos(theta)
+						self.v_velocity[old_enough[i]] = self.swimming_speed(self.elements.age_seconds[old_enough][i])*np.sin(theta)
+					else:
+						self.u_velocity[old_enough[i]] = uv * cos(theta)
+						self.v_velocity[old_enough[i]] = uv * sin(theta)
 			
-			self.update_positions(u_velocity , v_velocity)
+			self.update_positions(self.u_velocity , self.v_velocity)
 
 
 	def mix_orientation(self):
@@ -553,11 +553,11 @@ class FishLarvaeOrient(OceanDrift):
 				
 							if norm_swim < uv:
 								# Compute u and v velocity
-								u_velocity[old_enough[i]] = self.swimming_speed(self.elements.age_seconds[old_enough][i])*np.cos(theta)
-								v_velocity[old_enough[i]] = self.swimming_speed(self.elements.age_seconds[old_enough][i])*np.sin(theta)
+								self.u_velocity[old_enough[i]] = self.swimming_speed(self.elements.age_seconds[old_enough][i])*np.cos(theta)
+								self.v_velocity[old_enough[i]] = self.swimming_speed(self.elements.age_seconds[old_enough][i])*np.sin(theta)
 							else:
-								u_velocity[old_enough[i]] = uv * cos(theta)
-								v_velocity[old_enough[i]] = uv * sin(theta)
+								self.u_velocity[old_enough[i]] = uv * cos(theta)
+								self.v_velocity[old_enough[i]] = uv * sin(theta)
 								
 						if self.get_config('biology:orientation')=='continuous_2':
 							# Computing preferred direction
@@ -565,32 +565,32 @@ class FishLarvaeOrient(OceanDrift):
 							theta = thetaCard + ti
 				
 							# Compute u and v velocity
-							u_velocity[old_enough[i]] = self.swimming_speed(self.elements.age_seconds[old_enough][i])*np.cos(theta)
-							v_velocity[old_enough[i]] = self.swimming_speed(self.elements.age_seconds[old_enough][i])*np.sin(theta)
+							self.u_velocity[old_enough[i]] = self.swimming_speed(self.elements.age_seconds[old_enough][i])*np.cos(theta)
+							self.v_velocity[old_enough[i]] = self.swimming_speed(self.elements.age_seconds[old_enough][i])*np.sin(theta)
 							
-					else:
-						pt_lon = self.elements.lon[old_enough][i]
-						pt_lat = self.elements.lat[old_enough][i]
-						pt_lon_old = self.previous_lon[old_enough][i]
-						pt_lat_old = self.previous_lat[old_enough][i]
-						# Case where particle close enough and old enough to orient
-						# Strength of orientation (depend on distance to the habitat)
-						d = 1 - (habitat_near[i][0]*6371/self.get_config('biology:max_orient_distance'))
-						# Compute direction of nearest habitat. See Staaterman et al., 2012
-						theta_pref = - self.haversine_angle(pt_lon, pt_lat, self.centers_habitat[habitat_id[i][0]][0], self.centers_habitat[habitat_id[i][0]][1]) 
-						# Compute direction from previous timestep
-						theta_current = self.haversine_angle(pt_lon_old, pt_lat_old, pt_lon, pt_lat)
-						# Mean turning angle
-						mu = -d * (theta_current - theta_pref)
-						# New direction randomly selected in Von Mises distribution
-						ti  = np.random.vonmises(0, 5) # First parameter: mu, second parameter: kappa (control the uncertainty of orientation) 
-						theta = ti - theta_current - mu
+						else:
+							pt_lon = self.elements.lon[old_enough][i]
+							pt_lat = self.elements.lat[old_enough][i]
+							pt_lon_old = self.previous_lon[old_enough][i]
+							pt_lat_old = self.previous_lat[old_enough][i]
+							# Case where particle close enough and old enough to orient
+							# Strength of orientation (depend on distance to the habitat)
+							d = 1 - (habitat_near[i][0]*6371/self.get_config('biology:max_orient_distance'))
+							# Compute direction of nearest habitat. See Staaterman et al., 2012
+							theta_pref = - self.haversine_angle(pt_lon, pt_lat, self.centers_habitat[habitat_id[i][0]][0], self.centers_habitat[habitat_id[i][0]][1]) 
+							# Compute direction from previous timestep
+							theta_current = self.haversine_angle(pt_lon_old, pt_lat_old, pt_lon, pt_lat)
+							# Mean turning angle
+							mu = -d * (theta_current - theta_pref)
+							# New direction randomly selected in Von Mises distribution
+							ti  = np.random.vonmises(0, 5) # First parameter: mu, second parameter: kappa (control the uncertainty of orientation) 
+							theta = ti - theta_current - mu
 						
-						# Compute u and v velocity
-						u_velocity[old_enough[i]] = self.swimming_speed(self.elements.age_seconds[old_enough][i])*np.cos(theta)
-						v_velocity[old_enough[i]] = self.swimming_speed(self.elements.age_seconds[old_enough][i])*np.sin(theta)
+							# Compute u and v velocity
+							self.u_velocity[old_enough[i]] = self.swimming_speed(self.elements.age_seconds[old_enough][i])*np.cos(theta)
+							self.v_velocity[old_enough[i]] = self.swimming_speed(self.elements.age_seconds[old_enough][i])*np.sin(theta)
 						
-			self.update_positions(u_velocity , v_velocity)
+			self.update_positions(self.u_velocity , self.v_velocity)
 	
 	
 	def swimming_speed(self, age):
@@ -716,3 +716,4 @@ class FishLarvaeOrient(OceanDrift):
 			
 		## Mortality
 		self.larval_mortality()
+			
