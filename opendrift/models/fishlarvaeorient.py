@@ -4,7 +4,7 @@
 # 1. Direct orientation: Competent ('old enough to orient') larvae swim in the direction of the nearest habitat (represented by polygons in a shapefile) if they are close enough to detect it (controlled by user input). Based on Staaterman et al., 2012 and Codling et al., 2004.
 # 2. Rheotaxis orientation: Countercurrent swimming. Competent larvae swim against the direction of the current. Larvae swim at lower or equal speed as the currents, depending on their swimming speed. Larvae cannot swim faster than the currents.
 # 3. Cardinal orientation: Competent larvae swim in a pre-determine direction (controlled by user input).
-# 4. Continuous orientation: Type 1 => Rheotaxis orientation when larvae are offshore, then reef orientation when they are close enough to the reefs. OR. Type 2=> Cardinal orientation then reef orientation. User input cardinal heading, distance of reef detection, and beginning of orientation.
+# 4. Continuous orientation: Type 1 => Rheotaxis orientation when larvae are offshore, then reef orientation when they are close enough to the reefs AND ready to settle. OR. Type 2=> Cardinal orientation then reef orientation. User input cardinal heading, distance of reef detection, and beginning of orientation.
 #
 # Common to all orientation behavior: horizontal swimming speed developing with age of the larvae. Coded following the relationship exposed in Fisher and Bellwood, 2003.
 # This code also introduces Ontogenetic Vertical Migration (OVM) where larvae swim to different depth following their development (see Irisson et al., 2010 for distribution examples).
