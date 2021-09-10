@@ -3,53 +3,83 @@ version: 2.1
 orbs:
   docker-publish: circleci/docker-publish@0.1.3
 
+commands:
+  run_tests:
+    steps:
+      - run:
+          name: Run tests
+          command: |
+            source activate opendrift
+            pytest --junitxml=test-results/junit.xml --cov=opendrift --ignore=tests/benchmarks --ignore=tests/wps --run-slow --durations=50 --benchmark-disable -v --log-cli-level=debug
+
+      - store_test_results:
+          path: test-results
+
+      - store_artifacts:
+          path: test-results
+
+      - run:
+          name: Upload to coveralls
+          command: |
+            source activate opendrift
+            if [ -v COVERALLS_UPLOAD ]; then
+              COVERALLS_REPO_TOKEN=nEzcGcepz6KeM8OpvG2WoxbGjMGwivyAQ coveralls
+            fi
+
+
+  install_conda_environment:
+    steps:
+      - run:
+          name: Checksum environment
+          command: |
+            echo "python=${PYTHON_VERSION}" > envconfig
+            echo "numpy=${NUMPY_VERSION}" >> envconfig
+            cat envconfig
+
+      - restore_cache:
+          key: v14-deps1-{{ checksum "environment.yml" }}-{{ checksum "envconfig" }}
+
+      - run:
+          name: Install requirements
+          no_output_timeout: 30m
+          command: |
+            if [ ! -e /opt/conda/envs/opendrift ]; then
+              if [ -v PYTHON_VERSION ]; then
+                # pin python and numpy
+                conda create -c conda-forge -n opendrift -q -y "python==${PYTHON_VERSION}" "numpy==${NUMPY_VERSION}"
+
+                echo "python ${PYTHON_VERSION}" > /opt/conda/envs/opendrift/conda-meta/pinned
+                echo "numpy ${NUMPY_VERSION}"  >> /opt/conda/envs/opendrift/conda-meta/pinned
+
+                conda env update -n opendrift -q -f environment.yml
+              else
+                conda env create -q --file environment.yml
+              fi
+
+              source activate opendrift
+
+              pip install pyyaml coveralls
+            fi
+
+      - save_cache:
+          key: v14-deps1-{{ checksum "environment.yml" }}-{{ checksum "envconfig" }}
+          paths:
+            - "/opt/conda/envs"
+      - run:
+          name: List environment
+          command: |
+            source activate opendrift
+            conda list
+
+
 test-template: &test-template
   docker:
     - image: continuumio/miniconda3
   resource_class: medium+
   steps:
     - checkout
-    - run:
-        name: Checksum environment
-        command: |
-          echo "python=${PYTHON_VERSION}" > envconfig
-          echo "numpy=${NUMPY_VERSION}" >> envconfig
-          cat envconfig
 
-    - restore_cache:
-        key: v14-deps1-{{ checksum "environment.yml" }}-{{ checksum "envconfig" }}
-    - run:
-        name: Install requirements
-        no_output_timeout: 30m
-        command: |
-          if [ ! -e /opt/conda/envs/opendrift ]; then
-            if [ -v PYTHON_VERSION ]; then
-              # pin python and numpy
-              conda create -c conda-forge -n opendrift -q -y "python==${PYTHON_VERSION}" "numpy==${NUMPY_VERSION}"
-
-              echo "python ${PYTHON_VERSION}" > /opt/conda/envs/opendrift/conda-meta/pinned
-              echo "numpy ${NUMPY_VERSION}"  >> /opt/conda/envs/opendrift/conda-meta/pinned
-
-              conda env update -n opendrift -q -f environment.yml
-            else
-              conda env create -q --file environment.yml
-            fi
-
-            source activate opendrift
-
-            pip install pyyaml coveralls
-          fi
-
-    - save_cache:
-        key: v14-deps1-{{ checksum "environment.yml" }}-{{ checksum "envconfig" }}
-        paths:
-          - "/opt/conda/envs"
-
-    - run:
-        name: List environment
-        command: |
-          source activate opendrift
-          conda list
+    - install_conda_environment
 
     - restore_cache:
         key: v1-landmask
@@ -65,29 +95,13 @@ test-template: &test-template
         paths:
           - "/tmp/landmask"
 
-    - run:
-        name: Run tests
-        command: |
-          source activate opendrift
-          pytest --junitxml=test-results/junit.xml --cov=opendrift --ignore=tests/benchmarks --ignore=tests/wps --runslow --durations=50 --benchmark-disable -v --log-cli-level=debug
-
-    - store_test_results:
-        path: test-results
-
-    - store_artifacts:
-        path: test-results
-
-    - run:
-        name: Upload to coveralls
-        command: |
-          source activate opendrift
-          if [ ! -v PYTHON_VERSION ]; then
-            COVERALLS_REPO_TOKEN=nEzcGcepz6KeM8OpvG2WoxbGjMGwivyAQ coveralls
-          fi
+    - run_tests
 
 jobs:
   python_latest:
     <<: *test-template
+    environment:
+      - COVERALLS_UPLOAD=1
 
   python_38_numpy_119:
     <<: *test-template
@@ -100,6 +114,54 @@ jobs:
     environment:
       - PYTHON_VERSION=3.7
       - NUMPY_VERSION=1.17
+
+  python_latest_roaring:
+    docker:
+      - image: continuumio/miniconda3
+    resource_class: medium+
+    environment:
+      - PYTHON_VERSION=3.7
+      - NUMPY_VERSION=1.17
+    steps:
+    - checkout
+
+    - install_conda_environment
+
+    - run:
+        name: Install rust
+        command: |
+          apt update -y
+          apt install -y libssl-dev pkg-config curl build-essential libgeos-dev
+          curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal --default-toolchain nightly
+
+    - run:
+        name: Install setuptools-rust
+        command: |
+            source activate opendrift
+            pip install setuptools-rust
+
+    - run:
+        name: Install roaring-landmask
+        command: |
+            source activate opendrift
+            source $HOME/.cargo/env
+            pip install -v git+https://github.com/gauteh/roaring-landmask
+
+    - run:
+        name: Remove Opendrift Landmask Data
+        command: |
+            source activate opendrift
+            conda remove --force -y opendrift-landmask-data
+
+    - run:
+        name: Check for RoaringLandmask
+        command: |
+            source activate opendrift
+            source $HOME/.cargo/env
+            python -c 'from roaring_landmask import RoaringLandmask; r = RoaringLandmask.new()'
+
+    - run_tests
+
 
   docs-build:
     docker:
@@ -241,6 +303,7 @@ workflows:
       - python_latest
       - python_38_numpy_119
       - python_37_numpy_117
+      - python_latest_roaring
 
   build:
     jobs:
