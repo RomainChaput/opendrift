@@ -37,7 +37,7 @@ commands:
             cat envconfig
 
       - restore_cache:
-          key: v14-deps1-{{ checksum "environment.yml" }}-{{ checksum "envconfig" }}
+          key: v15-deps1-{{ checksum "environment.yml" }}-{{ checksum "envconfig" }}
 
       - run:
           name: Install requirements
@@ -62,7 +62,7 @@ commands:
             fi
 
       - save_cache:
-          key: v14-deps1-{{ checksum "environment.yml" }}-{{ checksum "envconfig" }}
+          key: v15-deps1-{{ checksum "environment.yml" }}-{{ checksum "envconfig" }}
           paths:
             - "/opt/conda/envs"
       - run:
@@ -119,33 +119,16 @@ jobs:
     docker:
       - image: continuumio/miniconda3
     resource_class: medium+
-    environment:
-      - PYTHON_VERSION=3.7
-      - NUMPY_VERSION=1.17
     steps:
     - checkout
 
     - install_conda_environment
 
     - run:
-        name: Install rust
-        command: |
-          apt update -y
-          apt install -y libssl-dev pkg-config curl build-essential libgeos-dev
-          curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal --default-toolchain nightly
-
-    - run:
-        name: Install setuptools-rust
-        command: |
-            source activate opendrift
-            pip install setuptools-rust
-
-    - run:
         name: Install roaring-landmask
         command: |
             source activate opendrift
-            source $HOME/.cargo/env
-            pip install -v git+https://github.com/gauteh/roaring-landmask
+            pip install -v roaring_landmask
 
     - run:
         name: Remove Opendrift Landmask Data
@@ -157,7 +140,6 @@ jobs:
         name: Check for RoaringLandmask
         command: |
             source activate opendrift
-            source $HOME/.cargo/env
             python -c 'from roaring_landmask import RoaringLandmask; r = RoaringLandmask.new()'
 
     - run_tests
