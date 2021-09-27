@@ -146,7 +146,7 @@ o.list_config()
 o.run(stop_on_error=False,
       time_step=timedelta(seconds = 900), # requires a small time-step to compute the orientation
       end_time = finish_time,
-      time_step_output=timedelta(seconds = 3600 * 3),
+      time_step_output=timedelta(seconds = 3600 * 1),
       outfile= 'test_development_orientation_Opendrift_FLK.nc')
 
 
