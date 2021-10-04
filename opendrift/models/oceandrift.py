@@ -80,6 +80,7 @@ class OceanDrift(OpenDriftSimulation):
         'surface_downward_y_stress': {'fallback': 0},
         'turbulent_kinetic_energy': {'fallback': 0},
         'turbulent_generic_length_scale': {'fallback': 0},
+        'ocean_mixed_layer_thickness': {'fallback': 50},
         'sea_floor_depth_below_sea_level': {'fallback': 10000},
         'land_binary_mask': {'fallback': None},
         }
@@ -105,6 +106,9 @@ class OceanDrift(OpenDriftSimulation):
                 'enum': ['environment', 'stepfunction', 'windspeed_Sundby1983',
                  'windspeed_Large1994', 'gls_tke','constant'], 'level': self.CONFIG_LEVEL_ADVANCED,
                  'units': 'seconds', 'description': 'Algorithm/source used for profile of vertical diffusivity. Environment means that diffusivity is aquired from readers or environment constants/fallback.'},
+            'vertical_mixing:background_diffusivity': {'type': 'float', 'min': 0, 'max': 1, 'default': .001,
+                'level': self.CONFIG_LEVEL_ADVANCED, 'units': 'm2s-1', 'description':
+                'Background diffusivity used below mixed layer for wind parameterisations.'},
             'vertical_mixing:TSprofiles': {'type': 'bool', 'default': False, 'level':
                 self.CONFIG_LEVEL_ADVANCED,
                 'description': 'Update T and S profiles within inner loop of vertical mixing. This takes more time, but may be slightly more accurate.'},
@@ -234,13 +238,15 @@ class OceanDrift(OpenDriftSimulation):
         pass
 
     def get_diffusivity_profile(self, model):
-        depths = self.environment_profiles['z']
+        depths = np.abs(self.environment_profiles['z'])
         wind, depth = np.meshgrid(self.wind_speed(), depths)
+        MLD = self.environment.ocean_mixed_layer_thickness
+        background_diffusivity = self.get_config('vertical_mixing:background_diffusivity')
 
         if model == 'windspeed_Large1994':
-            return verticaldiffusivity_Large1994(wind, depth)
+            return verticaldiffusivity_Large1994(wind, depth, MLD, background_diffusivity)
         elif model == 'windspeed_Sundby1983':
-            return verticaldiffusivity_Sundby1983(wind, depth)
+            return verticaldiffusivity_Sundby1983(wind, depth, MLD, background_diffusivity)
         elif model == 'gls_tke':
             if not hasattr(self, 'gls_parameters'):
                 logger.info('Searching readers for GLS parameters...')
@@ -301,7 +307,8 @@ class OceanDrift(OpenDriftSimulation):
             else:
                 logger.debug('Using diffusivity from Large1994 since model diffusivities not available')
                 # Using higher vertical resolution when analytical
-                self.environment_profiles['z'] = -np.arange(0, 50)
+                self.environment_profiles['z'] = \
+                        -np.arange(0, self.environment.ocean_mixed_layer_thickness.max() + 2)
                 Kprofiles = self.get_diffusivity_profile('windspeed_Large1994')
         elif diffusivity_model == 'constant':
             logger.debug('Using constant diffusivity specified by fallback_values[''ocean_vertical_diffusivity''] = %s m2.s-1' % (self.fallback_values['ocean_vertical_diffusivity']))
@@ -312,7 +319,8 @@ class OceanDrift(OpenDriftSimulation):
             # Using higher vertical resolution when analytical
             if self.environment_profiles is None:
                 self.environment_profiles = {}
-            self.environment_profiles['z'] = -np.arange(0, 50)
+            self.environment_profiles['z'] = \
+                    -np.arange(0, self.environment.ocean_mixed_layer_thickness.max() + 2)
             # Note: although analytical functions, z is discretised
             Kprofiles = self.get_diffusivity_profile(diffusivity_model)
 

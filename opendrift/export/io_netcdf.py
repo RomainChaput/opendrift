@@ -100,13 +100,14 @@ def write_buffer(self):
             date2num(times, self.timeStr)
 
     # Write status categories metadata
-    status_dtype = self.ElementType.variables['status']['dtype']
-    self.outfile.variables['status'].valid_range = np.array(
-        (0, len(self.status_categories) - 1)).astype(status_dtype)
-    self.outfile.variables['status'].flag_values = \
-        np.array(np.arange(len(self.status_categories)), dtype=status_dtype)
-    self.outfile.variables['status'].flag_meanings = \
-        " ".join(self.status_categories)
+    # TODO: need not be written each output timestep, thus this could be deleted?
+    #status_dtype = self.ElementType.variables['status']['dtype']
+    #self.outfile.variables['status'].valid_range = np.array(
+    #    (0, len(self.status_categories) - 1)).astype(status_dtype)
+    #self.outfile.variables['status'].flag_values = \
+    #    np.array(np.arange(len(self.status_categories)), dtype=status_dtype)
+    #self.outfile.variables['status'].flag_meanings = \
+    #    " ".join(self.status_categories)
 
     logger.info('Wrote %s steps to file %s' % (num_steps_to_export,
                                                 self.outfile_name))
@@ -126,6 +127,14 @@ def close(self):
         np.array(np.arange(len(self.status_categories)), dtype=status_dtype)
     self.outfile.variables['status'].flag_meanings = \
         " ".join(self.status_categories)
+
+    # Write origin_marker definitions
+    if 'origin_marker' in self.outfile.variables:
+        self.outfile.variables['origin_marker'].flag_values = \
+            np.array(np.arange(len(self.origin_marker)))
+        self.outfile.variables['origin_marker'].flag_meanings = \
+            " ".join(self.origin_marker.values())
+
     # Write final timesteps to file
     self.outfile.time_coverage_end = str(self.time)
 
@@ -136,6 +145,12 @@ def close(self):
     if hasattr(self, 'metadata_dict'):
         for key, value in self.metadata_dict.items():
             self.outfile.setncattr(key, str(value))
+
+    # Write min and max values as variable attributes
+    for var in self.history_metadata:
+        if var in self.outfile.variables:
+            self.outfile.variables[var].setncattr('minval', self.minvals[var])
+            self.outfile.variables[var].setncattr('maxval', self.maxvals[var])
 
     # Write bounds metadata
     self.outfile.geospatial_lat_min = self.history['lat'].min()
@@ -212,6 +227,8 @@ def import_file_xarray(self, filename, chunks):
         self.time_step_output = timedelta(seconds=float(ts1 - ts0))
     self.time = self.end_time  # Using end time as default
     self.status_categories = self.ds.status.flag_meanings.split()
+    if 'flag_meanings' in self.ds.origin_marker.attrs:
+        self.origin_marker = [s.replace('_', ' ') for s in self.ds.origin_marker.flag_meanings.split()]
 
     num_elements = len(self.ds.trajectory)
     elements=np.arange(num_elements)
@@ -238,10 +255,16 @@ def import_file_xarray(self, filename, chunks):
     # Read some saved parameters
     if os.path.exists(self.analysis_file):
         self.af = xr.open_dataset(self.analysis_file)
-        self.lonmin = self.af.lonmin
-        self.lonmax = self.af.lonmax
-        self.latmin = self.af.latmin
-        self.latmax = self.af.latmax
+        if 'lonmin' in self.af:
+            self.lonmin = self.af.lonmin
+            self.lonmax = self.af.lonmax
+            self.latmin = self.af.latmin
+            self.latmax = self.af.latmax
+    if 'minval' in self.ds.lon.attrs:
+        self.lonmin = np.float32(self.ds.lon.minval)
+        self.latmin = np.float32(self.ds.lat.minval)
+        self.lonmax = np.float32(self.ds.lon.maxval)
+        self.latmax = np.float32(self.ds.lat.maxval)
 
 def import_file(self, filename, times=None, elements=None):
     """Create OpenDrift object from imported file.

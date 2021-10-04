@@ -155,6 +155,11 @@ class OpenDriftSimulation(PhysicsMethods, Timeable):
 
         self.show_continuous_performance = False
 
+        self.origin_marker = None  # Dictionary to store named seeding locations
+
+        self.minvals = {}  # Dicionaries to store minimum and maximum values of variables
+        self.maxvals = {}
+
         # List to store GeoJSON dicts of seeding commands
         self.seed_geojson = []
 
@@ -1467,6 +1472,23 @@ class OpenDriftSimulation(PhysicsMethods, Timeable):
         if 'cone' in kwargs:
             raise ValueError('Keyword *cone* for seed_elements is deprecated, use seed_cone() instead.')
 
+        if self.origin_marker is None:
+            self.origin_marker = {}
+        if 'origin_marker' in kwargs:
+            origin_marker = kwargs['origin_marker']
+        else:
+            origin_marker = len(self.origin_marker)
+        if 'origin_marker_name' in kwargs:
+            origin_marker_name = kwargs['origin_marker_name']
+            del kwargs['origin_marker_name']
+        else:
+            origin_marker_name = 'Seed %d' % len(self.origin_marker)
+        if not 'origin_marker' in kwargs:
+            kwargs['origin_marker'] = origin_marker
+        if '_' in origin_marker_name:
+            raise ValueError('Underscore (_) not allowed in origin_marker_name')
+        self.origin_marker[str(origin_marker)] = origin_marker_name.replace(' ', '_')
+
         lon = np.atleast_1d(lon).ravel()
         lat = np.atleast_1d(lat).ravel()
         radius = np.atleast_1d(radius).ravel()
@@ -2603,6 +2625,7 @@ class OpenDriftSimulation(PhysicsMethods, Timeable):
             element_ind = deactivated
             time_ind = np.minimum(time_ind + 1, self.history.shape[1] - 1)
 
+        # TODO: storing of variables and environment below should be collected in a single loop
         # Store present state in history recarray
         for i, var in enumerate(self.elements.variables):
             if self.export_variables is not None and \
@@ -2614,6 +2637,15 @@ class OpenDriftSimulation(PhysicsMethods, Timeable):
             # some elements have been deactivated
             self.history[var][ID_ind, time_ind] = \
                 getattr(self.elements, var)[element_ind]
+            if len(ID_ind) > 0:
+                newmin = np.min(self.history[var][ID_ind, time_ind])
+                newmax = np.max(self.history[var][ID_ind, time_ind])
+                if var not in self.minvals:
+                    self.minvals[var] = newmin
+                    self.maxvals[var] = newmax
+                else:
+                    self.minvals[var] = np.minimum(self.minvals[var], newmin)
+                    self.maxvals[var] = np.maximum(self.maxvals[var], newmax)
         # Copy environment data to history array
         for i, var in enumerate(self.environment.dtype.names):
             if self.export_variables is not None and \
@@ -2621,6 +2653,15 @@ class OpenDriftSimulation(PhysicsMethods, Timeable):
                 continue
             self.history[var][ID_ind, time_ind] = \
                 getattr(self.environment, var)[element_ind]
+            if len(ID_ind) > 0:
+                newmin = np.min(self.history[var][ID_ind, time_ind])
+                newmax = np.max(self.history[var][ID_ind, time_ind])
+                if var not in self.minvals:
+                    self.minvals[var] = newmin
+                    self.maxvals[var] = newmax
+                else:
+                    self.minvals[var] = np.minimum(self.minvals[var], newmin)
+                    self.maxvals[var] = np.maximum(self.maxvals[var], newmax)
 
         # Call writer if buffer is full
         if (self.outfile is not None) and \
@@ -2680,10 +2721,11 @@ class OpenDriftSimulation(PhysicsMethods, Timeable):
             self.latmin = np.nanmin(self.ds.lat)
             logger.debug('Finding max latitude...')
             self.latmax = np.nanmax(self.ds.lat)
-            if os.path.exists(self.analysis_file):
-                self.af = Dataset(self.analysis_file, 'a')
-            else:
-                self.af = Dataset(self.analysis_file, 'w')
+            if not hasattr(self, 'af'):
+                if os.path.exists(self.analysis_file):
+                    self.af = Dataset(self.analysis_file, 'a')
+                else:
+                    self.af = Dataset(self.analysis_file, 'w')
             self.af.lonmin = self.lonmin
             self.af.lonmax = self.lonmax
             self.af.latmin = self.latmin
@@ -2902,9 +2944,12 @@ class OpenDriftSimulation(PhysicsMethods, Timeable):
             """Sub function needed for matplotlib animation."""
             ax.set_title('%s\n%s UTC' % (self._figure_title(), times[i]))
             if background is not None:
-                map_x, map_y, scalar, u_component, v_component, qmap_x, qmap_y = \
-                    self.get_map_background(ax, background,
-                                            time=times[i])
+                if isinstance(background, xr.DataArray):
+                    scalar = background[i,:,:].values
+                elif isinstance(background, str):
+                    map_x, map_y, scalar, u_component, v_component, qmap_x, qmap_y = \
+                        self.get_map_background(ax, background,
+                                                time=times[i])
                 # https://stackoverflow.com/questions/18797175/animation-with-pcolormesh-routine-in-matplotlib-how-do-i-initialize-the-data
                 bg.set_array(scalar[:-1,:-1].ravel())
                 if type(background) is list:
@@ -2986,9 +3031,15 @@ class OpenDriftSimulation(PhysicsMethods, Timeable):
                 vmax = colorarray.max()
 
         if background is not None:
-            map_x, map_y, scalar, u_component, v_component, qmap_x, qmap_y = \
-                self.get_map_background(ax, background,
-                                        time=self.start_time)
+            if isinstance(background, xr.DataArray):
+                map_x = background.coords['lon_bin']
+                map_y = background.coords['lat_bin']
+                scalar = background[0,:,:]
+                map_y, map_x = np.meshgrid(map_y, map_x)
+            else:
+                map_x, map_y, scalar, u_component, v_component, qmap_x, qmap_y = \
+                    self.get_map_background(ax, background,
+                                            time=self.start_time)
             bg = ax.pcolormesh(map_x, map_y, scalar[:-1,:-1], alpha=bgalpha,
                                antialiased=True, linewidth=0.0, rasterized=True,
                                vmin=vmin, vmax=vmax, cmap=cmap, transform = gcrs)
@@ -3115,7 +3166,10 @@ class OpenDriftSimulation(PhysicsMethods, Timeable):
             elif background is not None:
                 item = bg
                 if clabel is None:
-                    clabel = background
+                    if isinstance(background, xr.DataArray):
+                        clabel = background.name
+                    else:
+                        clabel = background
 
             cb = fig.colorbar(item, orientation='horizontal', pad=.05, aspect=30, shrink=.8, drawedges=False)
             cb.set_label(clabel)
@@ -3735,7 +3789,8 @@ class OpenDriftSimulation(PhysicsMethods, Timeable):
 
         return t_total, t_origin_marker
 
-    def get_density_xarray(self, pixelsize_m, weights=None, per_origin_marker=True):
+    def get_density_xarray(self, pixelsize_m, weights=None, per_origin_marker=True,
+                           dominating_origin_marker=False):
         from xhistogram.xarray import histogram
 
         if os.path.exists(self.analysis_file):
@@ -3812,6 +3867,13 @@ class OpenDriftSimulation(PhysicsMethods, Timeable):
                 # Computing total density historgram from om-components
                 density = density_om.sum(dim='origin_marker')
                 self.ads['density'] = density
+
+                if dominating_origin_marker is True:
+                    logger.info('Calculating dominating origin_marker')
+                    self.ads['dominating_origin_marker'] = density_om.argmax(
+                        dim='origin_marker', skipna=True)
+                    self.ads['dominating_origin_marker'] = \
+                        self.ads['dominating_origin_marker'].where(density>0)
             else:
                 # Adding total density historgram
                 density = histogram(self.ds.lon, self.ds.lat, bins=[lonbin, latbin],
@@ -4509,7 +4571,6 @@ class OpenDriftSimulation(PhysicsMethods, Timeable):
         else:
             proj = reader.proj
 
-        import scipy.ndimage as ndimage
         from opendrift.models.physics_methods import ftle
 
         if not isinstance(duration, timedelta):
