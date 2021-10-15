@@ -15,14 +15,13 @@
 #  
 # Author : Romain Chaput
 # 
-#  Under development - first draft: 25/06/2021 - Last update: 17/08/2021
+#  Under development - first draft: 25/06/2021 - Last update: 15/10/2021
 
 import numpy as np
 from opendrift.models.oceandrift import OceanDrift, Lagrangian3DArray
 import logging; logger = logging.getLogger(__name__)
 from datetime import timezone
 from shapely.geometry import Polygon, Point, MultiPolygon # added for settlement in polygon only
-import fiona # to import habitat
 import random
 from sklearn.neighbors import BallTree
 
@@ -262,14 +261,24 @@ class FishLarvaeOrient(OceanDrift):
 	  
 	def habitat(self, shapefile_location):
 		"""Suitable habitat in a shapefile"""
-		polyShp = fiona.open(shapefile_location) # import shapefile
 		polyList = []
 		self.centers_habitat = []
 		rad_centers = []
-		for poly in polyShp: # create individual polygons from shapefile
-			 polyGeom = Polygon(poly['geometry']['coordinates'][0])
-			 polyList.append(polyGeom) # Compile polygon in a list 
-			 self.centers_habitat.append(polyGeom.centroid.coords[0]) # Compute centroid and return a [lon, lat] list
+		try:
+			import fiona # to import habitat
+			polyShp = fiona.open(shapefile_location) # import shapefile
+			for poly in polyShp: # create individual polygons from shapefile
+				polyGeom = Polygon(poly['geometry']['coordinates'][0])
+				polyList.append(polyGeom) # Compile polygon in a list 
+				self.centers_habitat.append(polyGeom.centroid.coords[0]) # Compute centroid and return a [lon, lat] list
+		except ImportError:
+			import cartopy.io.shapereader as shpreader
+			polyShp = shpreader.Reader(shapefile_location) # import shapefile with shpreader instead of fiona
+			for poly in polyShp.records():
+				polyGeom = poly.geometry
+				polyList.append(polyGeom) # Compile polygon in a list 
+				self.centers_habitat.append(polyGeom.centroid.coords[0]) # Compute centroid and return a [lon, lat] list
+		
 		for poly in range(len(self.centers_habitat)):
 			rad_centers.append([np.deg2rad(self.centers_habitat[poly][1]),np.deg2rad(self.centers_habitat[poly][0])])
 		self.multiShp = MultiPolygon(polyList).buffer(0) # Aggregate polygons in a MultiPolygon object and buffer to fuse polygons and remove errors
