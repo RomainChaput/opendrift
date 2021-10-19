@@ -381,23 +381,28 @@ class BivalveLarvae(OceanDrift):
            them closer to shore, otherwise the larvae go up and down to sample the water column
            """
            # Check distance with nearest_habitat using the Ball tree algorithm
-           dist_old = self.ball_centers.query(list(zip(np.deg2rad(self.previous_lat), np.deg2rad(self.previous_lon))), k=1)
-           dist = self.ball_centers.query(list(zip(np.deg2rad(self.elements.lat), np.deg2rad(self.elements.lon))), k=1)
            # Prompt vertical movement for particles moving away from the habitat
            for i in range(len(self.elements.lat)):
-               if dist[0][i] > dist_old[0][i]:
-                   rand = random.uniform(0,1)
-                   movementr = self.elements.vertical_movement[i] if rand > 1/(2+self.get_config('drift:persistence')) else -1 if random.uniform(0,1) < 0.5 else 1 # Correlated random walk
-                   self.elements.vertical_movement[i] = movementr      
-                   self.elements.z[i] = self.elements.z[i] + movementr*self.get_config('drift:vertical_velocity') * self.time_step.total_seconds()
-                   # Control min and max depth of particles
-                   sea_surface_height = self.sea_surface_height()[i] # returns surface elevation at particle positions (>0 above msl, <0 below msl)
-                   if self.elements.z[i] >= sea_surface_height:
-                      self.elements.z[i] = sea_surface_height - 0.01 # set particle z at 0.01m below sea_surface_height
-                      self.elements.vertical_movement[i] = - abs(movementr)
-                   if self.get_config('drift:maximum_depth') is not None:
-                      if self.elements.z[i] <= self.get_config('drift:maximum_depth'):
-                          self.elements.vertical_movement[i] = + abs(movementr)
+               if self.previous_lon[i]:
+                   pos_old = np.array([[np.deg2rad(self.previous_lat[i]), np.deg2rad(self.previous_lon[i])]])
+                   dist_old = self.ball_centers.query(pos_old, k=1)
+                   pos = np.array([[np.deg2rad(self.elements.lat[i]), np.deg2rad(self.elements.lon[i])]])
+                   dist = self.ball_centers.query(pos, k=1)
+                   if dist[0] > dist_old[0]:
+                       rand = random.uniform(0,1)
+                       movementr = self.elements.vertical_movement[i] if rand > 1/(2+self.get_config('drift:persistence')) else -1 if random.uniform(0,1) < 0.5 else 1 #$
+                       self.elements.vertical_movement[i] = movementr
+                       self.elements.z[i] = self.elements.z[i] + movementr*self.get_config('drift:vertical_velocity') * self.time_step.total_seconds()
+                       # Control min and max depth of particles
+                       sea_surface_height = self.sea_surface_height()[i] # returns surface elevation at particle positions (>0 above msl, <0 below msl)
+                       if self.elements.z[i] >= sea_surface_height:
+                          self.elements.z[i] = sea_surface_height - 0.01 # set particle z at 0.01m below sea_surface_height
+                          self.elements.vertical_movement[i] = - abs(movementr)
+                       if self.get_config('drift:maximum_depth') is not None:
+                          if self.elements.z[i] <= self.get_config('drift:maximum_depth'):
+                              self.elements.vertical_movement[i] = + abs(movementr)
+                   else:
+                       pass
                else:
                    pass
                    
