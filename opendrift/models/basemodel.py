@@ -349,6 +349,8 @@ class OpenDriftSimulation(PhysicsMethods, Timeable):
                 'description': description_fallback}
         self._add_config(c)
 
+        self.history = None  # Recarray to store trajectories and properties
+
         # Find variables which require profiles
         self.required_profiles = [var for var in self.required_variables
             if 'profiles' in self.required_variables[var] and
@@ -876,6 +878,18 @@ class OpenDriftSimulation(PhysicsMethods, Timeable):
     def latest_time(self):
         return min(self.start_time, self.expected_end_time)
 
+    def reader_relevant(self, reader):
+        if hasattr(self, 'expected_endtime') and reader.start_time is not None and (
+                (reader.start_time > self.latest_time() or
+                 reader.end_time < self.earliest_time())):
+            logger.debug('Reader does not cover simulation period')
+            return False
+        if len(set(self.required_variables) &
+               set(reader.variables)) == 0:
+            logger.debug('Reader does not contain any relevant variables')
+            return False
+        return True
+
     def discard_reader_if_not_relevant(self, reader):
         if hasattr(self, 'expected_endtime') and reader.start_time is not None and (
                 (reader.start_time > self.latest_time() or
@@ -907,12 +921,19 @@ class OpenDriftSimulation(PhysicsMethods, Timeable):
                 del self.priority_list[var]
 
     def discard_irrelevant_readers(self):
+        discard = []
+
         for readername in self.readers:
             reader = self.readers[readername]
             if reader.is_lazy:
                 continue
-            if self.discard_reader_if_not_relevant(reader):
-                logger.debug('DISCARDED: ' + readername)
+
+            if not self.reader_relevant(reader):
+                discard.append(reader)
+
+        for reader in discard:
+            self.discard_reader(reader)
+            logger.debug('DISCARDED: ' + reader.name)
 
     def get_environment(self, variables, time, lon, lat, z, profiles):
         '''Retrieve environmental variables at requested positions.
@@ -2186,9 +2207,9 @@ class OpenDriftSimulation(PhysicsMethods, Timeable):
         # Some cleanup needed if starting from imported state
         if self.steps_calculation >= 1:
             self.steps_calculation = 0
-        if hasattr(self, 'history'):
+        if self.history is not None:
             # Delete history matrix before new run
-            delattr(self, 'history')
+            self.history = None
             # Renumbering elements from 0 to num_elements, necessary fix when
             # importing from file, where elements may have been deactivated
             # TODO: should start from 1?
@@ -2290,7 +2311,7 @@ class OpenDriftSimulation(PhysicsMethods, Timeable):
             logger.debug('\tPreparing %s' % reader.name)
             reader.prepare(
                 extent=simulation_extent,
-                start_time=self.start_time, end_time = self.expected_end_time)
+                start_time=self.start_time, end_time=self.expected_end_time, max_speed=self.max_speed)
 
         ##############################################################
         # If no landmask has been added, we determine it dynamically
@@ -2713,24 +2734,25 @@ class OpenDriftSimulation(PhysicsMethods, Timeable):
         if hasattr(self, 'ds'):  # If dataset is lazily imported
             lons = self.ds.lon
             lats = self.ds.lat
-            logger.debug('Finding min longitude...')
-            self.lonmin = np.nanmin(self.ds.lon)
-            logger.debug('Finding max longitude...')
-            self.lonmax = np.nanmax(self.ds.lon)
-            logger.debug('Finding min latitude...')
-            self.latmin = np.nanmin(self.ds.lat)
-            logger.debug('Finding max latitude...')
-            self.latmax = np.nanmax(self.ds.lat)
-            if not hasattr(self, 'af'):
-                if os.path.exists(self.analysis_file):
-                    self.af = Dataset(self.analysis_file, 'a')
-                else:
-                    self.af = Dataset(self.analysis_file, 'w')
-            self.af.lonmin = self.lonmin
-            self.af.lonmax = self.lonmax
-            self.af.latmin = self.latmin
-            self.af.latmax = self.latmax
-            self.af.close()
+            if not hasattr(self, 'lonmin'):
+                logger.debug('Finding min longitude...')
+                self.lonmin = np.nanmin(self.ds.lon)
+                logger.debug('Finding max longitude...')
+                self.lonmax = np.nanmax(self.ds.lon)
+                logger.debug('Finding min latitude...')
+                self.latmin = np.nanmin(self.ds.lat)
+                logger.debug('Finding max latitude...')
+                self.latmax = np.nanmax(self.ds.lat)
+            #if not hasattr(self, 'ads') and self.analysis_file is not None:
+            #    if os.path.exists(self.analysis_file):
+            #        self.ads = xr.open_dataset(self.analysis_file, mode='a')
+            #    else:
+            #        self.ads = xr.open_dataset(self.analysis_file, mode='w')
+            #    self.ads['lonmin'] = self.lonmin
+            #    self.ads['lonmax'] = self.lonmax
+            #    self.ads['latmin'] = self.latmin
+            #    self.ads['latmax'] = self.latmax
+            #    self.ads.close()
         else:
             lons, lats = self.get_lonlats()  # TODO: to be removed
 
@@ -2740,10 +2762,10 @@ class OpenDriftSimulation(PhysicsMethods, Timeable):
             latmin = corners[2]
             latmax = corners[3]
         elif hasattr(self, 'lonmin'):  # if dataset is lazily imported
-            lonmin = self.lonmin
-            lonmax = self.lonmax
-            latmin = self.latmin
-            latmax = self.latmax
+            lonmin = self.lonmin - buffer*2
+            lonmax = self.lonmax + buffer*2
+            latmin = self.latmin - buffer
+            latmax = self.latmax + buffer
         else:
             lons, lats = self.get_lonlats()
             lonmin = np.nanmin(lons) - buffer*2
@@ -2861,7 +2883,7 @@ class OpenDriftSimulation(PhysicsMethods, Timeable):
         return fig, ax, crs, lons.T, lats.T, index_of_first, index_of_last
 
     def get_lonlats(self):
-        if hasattr(self, 'history'):
+        if self.history is not None:
             lons = self.history['lon']
             lats = self.history['lat']
         else:
@@ -2886,7 +2908,7 @@ class OpenDriftSimulation(PhysicsMethods, Timeable):
         """Animate last run."""
 
 
-        if self.num_elements_total() == 0 and not hasattr(self, 'ds'):
+        if self.history is not None and self.num_elements_total() == 0 and not hasattr(self, 'ds'):
             raise ValueError('Please run simulation before animating')
 
         markersizebymass = False
@@ -2946,7 +2968,7 @@ class OpenDriftSimulation(PhysicsMethods, Timeable):
             if background is not None:
                 if isinstance(background, xr.DataArray):
                     scalar = background[i,:,:].values
-                elif isinstance(background, str):
+                else:
                     map_x, map_y, scalar, u_component, v_component, qmap_x, qmap_y = \
                         self.get_map_background(ax, background,
                                                 time=times[i])
@@ -3401,8 +3423,8 @@ class OpenDriftSimulation(PhysicsMethods, Timeable):
 
         mappable = None
 
-        if self.num_elements_total() == 0:
-            raise ValueError('Please run simulation before plotting')
+        if self.history is not None and self.num_elements_total() == 0 and not hasattr(self, 'ds'):
+            raise ValueError('Please run simulation before animating')
 
         start_time = datetime.now()
 
@@ -3420,7 +3442,7 @@ class OpenDriftSimulation(PhysicsMethods, Timeable):
         alpha = np.max((min_alpha, alpha))
         if legend is False:
             legend = None
-        if hasattr(self, 'history') and linewidth != 0:
+        if self.history is not None and linewidth != 0:
             # Plot trajectories
             from matplotlib.colors import is_color_like
             if linecolor is None or is_color_like(linecolor) is True:
@@ -3576,7 +3598,12 @@ class OpenDriftSimulation(PhysicsMethods, Timeable):
                 time = self.time - self.time_step_output
             else:
                 time = None
-            if background == 'residence':
+            if isinstance(background, xr.DataArray):
+                map_x = background.coords['lon_bin']
+                map_y = background.coords['lat_bin']
+                scalar = background
+                map_y, map_x = np.meshgrid(map_y, map_x)
+            elif background == 'residence':
                 scalar,lon_res,lat_res = self.get_residence_time(
                     pixelsize_m=density_pixelsize_m)
                 scalar[scalar==0] = np.nan
@@ -3611,8 +3638,11 @@ class OpenDriftSimulation(PhysicsMethods, Timeable):
                 cb.set_label(clabel)
             elif isinstance(linecolor, str) and linecolor != 'gray':
                 cb.set_label(str(linecolor))
-            if background is not None:
-                cb.set_label(str(background))
+            if background is not None and clabel is None:
+                if isinstance(background, xr.DataArray):
+                    cb.set_label(background.name)
+                else:
+                    cb.set_label(str(background))
 
         if type(background) is list:
             delta_x = (map_x[1,2] - map_x[1,1])/2.
@@ -3759,140 +3789,44 @@ class OpenDriftSimulation(PhysicsMethods, Timeable):
 
         return map_x, map_y, scalar, u_component, v_component, qmap_x, qmap_y
 
-    def get_density_timeseries(self, lon, lat):
-        """Get timeseries at a point from pre-calculated density field"""
+    def get_lonlat_bins(self, pixelsize_m):
+        latmin = self.latmin
+        latmax = self.latmax
+        lonmin = self.lonmin
+        lonmax = self.lonmax
+        deltalat = pixelsize_m/111000.0  # m to degrees
+        deltalon = deltalat/np.cos(np.radians((latmin+latmax)/2))
+        latbin = np.arange(latmin-deltalat, latmax+deltalat, deltalat)
+        lonbin = np.arange(lonmin-deltalon, lonmax+deltalon, deltalon)
+        return lonbin, latbin
 
-        if not hasattr(self, 'analysis_file'):
-            raise ValueError('Density has to be calculated with get_density_array or animation')
-
-        self.af = xr.open_dataset(self.analysis_file)
-        lon_bin = self.af.lon_bin.values
-        lat_bin = self.af.lat_bin.values
-
-        lon = np.atleast_1d(lon)
-        lat = np.atleast_1d(lat)
-        if lon.min()<lon_bin.min() or lon.max()>lon_bin.max():
-            raise ValueError('Longitude %s is outside range %s to %s' % (lon, lon_bin.min(), lon_bin.max()))
-        if lat.min()<lat_bin.min() or lat.max()>lat_bin.max():
-            raise ValueError('Latitude %s is outside range %s to %s' % (lat, lat_bin.min(), lat_bin.max()))
-
-        if len(lon) == 1:
-            t_total = self.af.density.sel(lon_bin=lon, lat_bin=lat, method='nearest')
-            t_origin_marker = self.af.density_origin_marker.sel(lon_bin=lon, lat_bin=lat, method='nearest')
-        elif len(lon) == 2:
-            t_total = self.af.density.sel(lon_bin=slice(lon[0], lon[1]), lat_bin=slice(lat[0], lat[1]))
-            t_total = t_total.sum(('lon_bin', 'lat_bin'))
-            t_origin_marker = self.af.density_origin_marker.sel(lon_bin=slice(lon[0], lon[1]), lat_bin=slice(lat[0], lat[1]))
-            t_origin_marker = t_origin_marker.sum(('lon_bin', 'lat_bin'))
-        else:
-            raise ValueError('Lon and lat must have length 1 (point) or 2 (min, max)')
-
-        return t_total, t_origin_marker
-
-    def get_density_xarray(self, pixelsize_m, weights=None, per_origin_marker=True,
-                           dominating_origin_marker=False):
+    def get_histogram(self, pixelsize_m, **kwargs):
         from xhistogram.xarray import histogram
+        lonbin, latbin = self.get_lonlat_bins(pixelsize_m)
+        max_om = int(self.ds.origin_marker.max().compute().values)
+        origin_marker=range(max_om+1)
+        if 'weights' in kwargs and kwargs['weights'] is not None and kwargs['weights'].ndim <2:
+            kwargs['weights'] = xr.DataArray(kwargs['weights'], dims=['trajectory'],
+                                             coords={'trajectory': self.ds.coords['trajectory']})
+        # Xarray Dataset to store histogram per origin_marker
+        h_om = xr.DataArray(np.zeros((len(self.ds.coords['time']),
+                             len(lonbin)-1, len(latbin)-1, max_om+1)),
+                             name='density_origin_marker',
+                             dims=('time', 'lon_bin', 'lat_bin', 'origin_marker'))
+        h_om.coords['time'] = self.ds.coords['time']
+        h_om.coords['origin_marker'] = origin_marker
 
-        if os.path.exists(self.analysis_file):
-            self.ads = xr.open_dataset(self.analysis_file)  # Import from file
-            logger.info('Importing from saved analysis file')
-            lon_bin = self.ads.lon_bin.values
-            lat_bin = self.ads.lat_bin.values
-            density = self.ads.density.values
-            if 'density_origin_marker' in self.ads:
-                density_origin_marker = self.ads.density_origin_marker.values
-            else:
-                density_origin_marker = None
-            self.ads.close()
-            return density, density_origin_marker, lon_bin, lat_bin
-
-        else:  # Calculate
-            self.ads = xr.Dataset()  # Dataset to store all data, to be saved to self.analysis_file
-            start = datetime.now()
-            logger.info('Calculating density array, this may take some time...')
-            deltalat = pixelsize_m/111000.0  # m to degrees
-            if hasattr(self, 'lonmin'):
-                lonmin = self.lonmin
-                lonmax = self.lonmax
-                latmin = self.latmin
-                latmax = self.latmax
-            else:
-                logger.debug('Finding min and max of lon and lat...')
-                lonmin = np.nanmin(self.ds.lon)
-                lonmax = np.nanmax(self.ds.lon)
-                latmin = np.nanmin(self.ds.lat)
-                latmax = np.nanmax(self.ds.lat)
-                self.ads.attrs['lonmin'] = lonmin
-                self.ads.attrs['lonmax'] = lonmax
-                self.ads.attrs['latmin'] = latmin
-                self.ads.attrs['latmax'] = latmax
-                self.ads.coords['time'] = self.ds.coords['time']
-
-            deltalon = deltalat/np.cos(np.radians((latmin+latmax)/2))
-            latbin = np.arange(latmin-deltalat, latmax+deltalat, deltalat)
-            lonbin = np.arange(lonmin-deltalon, lonmax+deltalon, deltalon)
-
-            if weights is not None:
-                if isinstance(weights, str):  # element property
-                    # We do not add 2D weights to analysis file, to save space
-                    self.ads.attrs['weights'] = weights
-                    weights = self.get_property(weights)[0]
-                elif not hasattr(weights, '__len__'):  # scalar
-                    weights = xr.DataArray(weights*xr.ones_like(self.ds.lon), dims=['trajectory'],
-                                           coords={'trajectory': self.ds.coords['trajectory']})
-                    self.ads['weights'] = weights
-                else:  # provided array
-                    weights = xr.DataArray(weights, dims=['trajectory'],
-                                           coords={'trajectory': self.ds.coords['trajectory']})
-                    self.ads['weights'] = weights
-
-            if per_origin_marker is True:
-                max_om = self.ds.origin_marker.max().compute().values
-                origin_marker = np.arange(max_om+1)
-                self.ads.coords['origin_marker'] = origin_marker
-                density_om = xr.DataArray(np.zeros((len(self.ds.coords['time']),
-                                                   len(lonbin)-1, len(latbin)-1, len(origin_marker))),
-                                          name='density_origin_marker',
-                                          dims=('time', 'lon_bin', 'lat_bin', 'origin_marker'))
-                for om in range(max_om+1):
-                    logger.info('\tcalculating for origin_marker %s...' % om)
-                    h = histogram(self.ds.lon.where(self.ds.origin_marker==om),
-                                  self.ds.lat.where(self.ds.origin_marker==om), bins=[lonbin, latbin],
-                                  weights=weights,
-                                  dim=['trajectory'])
-                    lon_bin = h.coords['lon_bin']
-                    lat_bin = h.coords['lat_bin']
-                    density_om[:, :, :, om] = h.copy()
-                self.ads['density_origin_marker'] = density_om
-                # Computing total density historgram from om-components
-                density = density_om.sum(dim='origin_marker')
-                self.ads['density'] = density
-
-                if dominating_origin_marker is True:
-                    logger.info('Calculating dominating origin_marker')
-                    self.ads['dominating_origin_marker'] = density_om.argmax(
-                        dim='origin_marker', skipna=True)
-                    self.ads['dominating_origin_marker'] = \
-                        self.ads['dominating_origin_marker'].where(density>0)
-            else:
-                # Adding total density historgram
-                density = histogram(self.ds.lon, self.ds.lat, bins=[lonbin, latbin],
-                              weights=weights,
-                              dim=['trajectory'])
-                lon_bin = density.coords['lon_bin']
-                lat_bin = density.coords['lat_bin']
-                self.ads['density'] = density
-                density_om = None
-
-            self.ads.coords['lon_bin'] = lon_bin
-            self.ads.coords['lat_bin'] = lat_bin
-
-            self.ads.to_netcdf(self.analysis_file)
-
-            logger.info('Time to calculate density array: %s' %
-                             (datetime.now() - start))
-
-        return density, density_om, lonbin, latbin
+        for om in origin_marker:
+            logger.info('\tcalculating for origin_marker %s...' % om)
+            h = histogram(self.ds.lon.where(self.ds.origin_marker==om),
+                          self.ds.lat.where(self.ds.origin_marker==om), bins=[lonbin, latbin],
+                          dim=['trajectory'],
+                          **kwargs)
+            if om == 0:
+                h_om.coords['lon_bin'] = h.coords['lon_bin']
+                h_om.coords['lat_bin'] = h.coords['lat_bin']
+            h_om[:, :, :, om] = h#.copy()
+        return h_om
 
     def get_density_array(self, pixelsize_m, weight=None):
         lon = self.get_property('lon')[0]
@@ -4431,7 +4365,7 @@ class OpenDriftSimulation(PhysicsMethods, Timeable):
     def __repr__(self):
         """String representation providing overview of model status."""
         outStr = '===========================\n'
-        if hasattr(self, 'history'):
+        if self.history is not None:
             outStr += self.performance()
             outStr += '===========================\n'
         outStr += 'Model:\t' + type(self).__name__ + \
@@ -4655,11 +4589,11 @@ class OpenDriftSimulation(PhysicsMethods, Timeable):
             logger.info('Nothing to reset')
             return
 
-        for attr in ['start_time', 'history', 'elements']:
+        for attr in ['start_time', 'elements']:
             if hasattr(self, attr):
                 delattr(self, attr)
         #del self.start_time
-        #del self.history
+        self.history = None
         #del self.elements
         self.elements_deactivated = self.ElementType()  # Empty array
         self.elements = self.ElementType()  # Empty array

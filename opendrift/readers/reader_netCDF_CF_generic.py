@@ -75,7 +75,7 @@ def proj_from_CF_dict(c):
     return proj4, proj
 
 
-class Reader(BaseReader, StructuredReader):
+class Reader(StructuredReader, BaseReader):
     """
     A reader for `CF-compliant <https://cfconventions.org/>`_ netCDF files. It can take a single file, or a file pattern.
 
@@ -130,7 +130,7 @@ class Reader(BaseReader, StructuredReader):
             logger.info('Opening dataset: ' + filestr)
             if ('*' in filestr) or ('?' in filestr) or ('[' in filestr):
                 logger.info('Opening files with MFDataset')
-                self.Dataset = xr.open_mfdataset(filename, concat_dim='time', combine='nested',
+                self.Dataset = xr.open_mfdataset(filename, data_vars='minimal', coords='minimal',
                                                  chunks={'time': 1}, decode_times=False)
             else:
                 self.Dataset = xr.open_dataset(filename, decode_times=False)
@@ -219,7 +219,11 @@ class Reader(BaseReader, StructuredReader):
                 elif time.ndim == 2:
                     self.times = [datetime.fromisoformat(''.join(t).replace('Z', '')) for t in time.astype(str)]
                 else:
-                    self.times = num2date(time, time_units)
+                    if 'calendar' in var.attrs:
+                        calendar = var.attrs['calendar']
+                    else:
+                        calendar = 'standard'
+                    self.times = num2date(time, time_units, calendar=calendar)
                 self.start_time = self.times[0]
                 self.end_time = self.times[-1]
                 if len(self.times) > 1:
