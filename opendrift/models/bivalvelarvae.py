@@ -360,7 +360,7 @@ class BivalveLarvae(OceanDrift):
                The method checks if a particle is within the limit of an habitat before to allow settlement
            """        
            # Get age of particle
-           old_enough = np.where(self.elements.age_seconds >= self.get_config('drift:min_settlement_age_seconds'))[0]
+           old_enough = np.where(np.abs(self.elements.age_seconds) >= self.get_config('drift:min_settlement_age_seconds'))[0]
            # Extract particles positions
            if len(old_enough) > 0 :
                pts_lon = self.elements.lon[old_enough]
@@ -435,8 +435,8 @@ class BivalveLarvae(OceanDrift):
 
             # Deactivate elements that exceed a certain age
             if self.get_config('drift:max_age_seconds') is not None:
-                self.deactivate_elements(self.elements.age_seconds >=
-                                         self.get_config('drift:max_age_seconds'),
+                self.deactivate_elements(np.abs(self.elements.age_seconds) >=
+                                         np.abs(self.get_config('drift:max_age_seconds')),
                                          reason='died')
 
             # Deacticate any elements outside validity domain set by user
