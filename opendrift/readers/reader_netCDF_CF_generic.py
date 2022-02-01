@@ -243,7 +243,13 @@ class Reader(StructuredReader, BaseReader):
         #########################
         # Summary of geolocation
         #########################
-        if 'x' not in locals():  # No x/y-coordinates were detected
+        if 'x' in locals():
+            if x[1]-x[0] == 1 and y[1]-y[0] == 1:
+                logger.info('deltaX and deltaY are 1, interpreting dataset as unprojected')
+                projected = False
+            else:
+                projected = True
+        if 'x' not in locals() or projected is False:  # No x/y-coordinates were detected
             if lon_var_name is None:
                 raise ValueError('No geospatial coordinates were detected, cannot geolocate dataset')
             # We load lon and lat arrays into memory
@@ -300,7 +306,6 @@ class Reader(StructuredReader, BaseReader):
             logger.info('Longitudes > 360 degrees, subtracting 360')
             self.xmin -= 360
             self.xmax -= 360
-            self.x -= 360
             self.x -= 360
 
         ##########################################
@@ -471,8 +476,8 @@ class Reader(StructuredReader, BaseReader):
         else:
             variables['x'] = indx
             variables['y'] = indy
-        variables['x'] = np.asarray(variables['x'])
-        variables['y'] = np.asarray(variables['y'])
+        variables['x'] = np.asarray(variables['x'], dtype=np.float32)
+        variables['y'] = np.asarray(variables['y'], dtype=np.float32)
 
         variables['time'] = nearestTime
 
@@ -482,5 +487,22 @@ class Reader(StructuredReader, BaseReader):
                 logger.debug('North is up, no rotation necessary')
             else:
                 self.rotate_variable_dict(variables)
+
+        if hasattr(self, 'shift_x'):
+            # "hidden feature": if reader.shift_x and reader.shift_y are defined,
+            # the returned fields are shifted this many meters in the x- and y directions
+            # E.g. reader.shift_x=10000 gives a shift 10 km eastwards (if x is east direction)
+            if self.proj.crs.is_geographic:  # meters to degrees
+                shift_y = (self.shift_y/111000)
+                shift_x = (self.shift_x/111000)*np.cos(np.radians(variables['y']))
+                logger.info('Shifting x between %s and %s' % (shift_x.min(), shift_x.max()))
+                logger.info('Shifting y with %s m' % shift_y)
+            else:
+                shift_x = self.shift_x
+                shift_y = self.shift_y
+                logger.info('Shifting x with %s m' % shift_x)
+                logger.info('Shifting y with %s m' % shift_y)
+            variables['x'] += shift_x
+            variables['y'] += shift_y
 
         return variables

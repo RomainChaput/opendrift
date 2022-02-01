@@ -145,7 +145,8 @@ class ShipDrift(OpenDriftSimulation):
         self._add_config({'seed:orientation': {'type': 'enum',
             'enum':['left', 'right', 'random'], 'default': 'random',
             'level': OpenDriftSimulation.CONFIG_LEVEL_ESSENTIAL,
-            'description': 'If ships are oriented to the left or right of the downwind direction, or whether this is unknown.'}})
+            'description': 'If ships are oriented to the left or right of the downwind direction,'
+                'or whether this is unknown. Left/right means that wind will hit ship from backboard/steerboard'}})
 
         self._set_config_default('drift:current_uncertainty', .05)
         self._set_config_default('drift:wind_uncertainty', .5)
@@ -295,15 +296,15 @@ class ShipDrift(OpenDriftSimulation):
         # Wave direction is taken as wind direction plus offset +/- 20 degrees
         offset = self.winwav_angle*2*(self.elements.orientation - 0.5)
         if (self.environment.sea_surface_wave_stokes_drift_x_velocity.max() == 0 and
-            self.environment.sea_surface_wave_stokes_drift_x_velocity.max() == 0):
+            self.environment.sea_surface_wave_stokes_drift_y_velocity.max() == 0):
                 logger.info('Using wind direction as wave direction')
                 wave_dir = np.radians(offset) + np.arctan2(self.environment.y_wind,
                                                            self.environment.x_wind)
         else:
             logger.info('Using Stokes drift direction as wave direction')
             wave_dir = np.radians(offset) + np.arctan2(
-                self.environment.sea_surface_wave_stokes_drift_x_velocity,
-                self.environment.sea_surface_wave_stokes_drift_y_velocity)
+                self.environment.sea_surface_wave_stokes_drift_y_velocity,
+                self.environment.sea_surface_wave_stokes_drift_x_velocity)
         F_wave_x = F_wave*np.cos(wave_dir)
         F_wave_y = F_wave*np.sin(wave_dir)
         F_total = np.sqrt(np.power(F_wind_x + F_wave_x, 2) +
