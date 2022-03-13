@@ -49,6 +49,7 @@ except ImportError:
 
 import opendrift
 from opendrift.timer import Timeable
+from opendrift.errors import NotCoveredError
 from opendrift.readers.basereader import BaseReader, standard_names
 from opendrift.readers import reader_from_url, reader_global_landmask
 from opendrift.models.physics_methods import PhysicsMethods
@@ -376,7 +377,7 @@ class OpenDriftSimulation(PhysicsMethods, Timeable):
                 'max': 100000,
                 'units': 'm2/s',
                 'description': 'Add horizontal diffusivity (random walk)',
-                'level': self.CONFIG_LEVEL_ADVANCED
+                'level': self.CONFIG_LEVEL_BASIC
             },
             'drift:wind_uncertainty': {
                 'type': 'float',
@@ -1054,7 +1055,7 @@ class OpenDriftSimulation(PhysicsMethods, Timeable):
             logger.debug(e)
             logger.warning('Reader could not be initialised, and is'
                            ' discarded: ' + lazyname)
-            self.discard_reader(reader)
+            self.discard_reader(reader, reason='could not be initialized')
             return self._initialise_next_lazy_reader()  # Call self
 
         reader.set_buffer_size(max_speed=self.max_speed)
@@ -1073,69 +1074,71 @@ class OpenDriftSimulation(PhysicsMethods, Timeable):
 
         return reader
 
-    def earliest_time(self):
-        return min(self.start_time, self.expected_end_time)
-
-    def latest_time(self):
-        return min(self.start_time, self.expected_end_time)
-
-    def reader_relevant(self, reader):
-        if hasattr(self,
-                   'expected_endtime') and reader.start_time is not None and (
-                       (reader.start_time > self.latest_time()
-                        or reader.end_time < self.earliest_time())):
-            logger.debug('Reader does not cover simulation period')
-            return False
-        if len(set(self.required_variables) & set(reader.variables)) == 0:
-            logger.debug('Reader does not contain any relevant variables')
-            return False
-        return True
-
     def discard_reader_if_not_relevant(self, reader):
-        if hasattr(self,
-                   'expected_endtime') and reader.start_time is not None and (
-                       (reader.start_time > self.latest_time()
-                        or reader.end_time < self.earliest_time())):
-            logger.debug('Reader does not cover simulation period')
-            self.discard_reader(reader)
-            return True
+        if reader.is_lazy:
+            return False
+        if reader.start_time is not None:
+            if hasattr(self, 'expected_end_time') and reader.start_time > self.expected_end_time:
+                self.discard_reader(reader, 'starts after simulation end')
+                return True
+            if hasattr(self, 'start_time') and reader.end_time < self.start_time:
+                self.discard_reader(reader, 'ends before simuation start')
+                return True
+            if hasattr(self, 'time') and reader.end_time < self.time:
+                self.discard_reader(reader, 'ends before simuation is finished')
+                return True
         if len(set(self.required_variables) & set(reader.variables)) == 0:
-            logger.debug('Reader does not contain any relevant variables')
-            self.discard_reader(reader)
+            self.discard_reader(reader, reason='does not contain any relevant variables')
             return True
-        return False
+        if not hasattr(reader, 'checked_for_overlap'):
+            if not reader.global_coverage():
+                if not hasattr(self, 'simulation_extent'):
+                    logger.warning('Simulation has no simulation_extent, cannot check reader coverage')
+                    return False
+                # TODO
+                # need a better coverage/overlap check below
+                corners = reader.xy2lonlat([reader.xmin, reader.xmin, reader.xmax, reader.xmax],
+                                           [reader.ymax, reader.ymin, reader.ymax, reader.ymin])
+                rlonmin = np.min(corners[0])
+                rlonmax = np.max(corners[0])
+                rlatmin = np.min(corners[1])
+                rlatmax = np.max(corners[1])
+                if hasattr(reader, 'proj4') and 'stere' in reader.proj4 and 'lat_0=90' in reader.proj4:
+                    rlatmax = 90
+                if hasattr(reader, 'proj4') and 'stere' in reader.proj4 and 'lat_0=-90' in reader.proj4:
+                    rlatmin = -90
+                if rlatmin > self.simulation_extent[3]:
+                    self.discard_reader(reader, reason='too far north')
+                    return True
+                if rlatmax < self.simulation_extent[1]:
+                    self.discard_reader(reader, reason='too far south')
+                    return True
+                if rlonmax < self.simulation_extent[0]:
+                    self.discard_reader(reader, reason='too far west')
+                    return True
+                if rlonmin > self.simulation_extent[2]:
+                    self.discard_reader(reader, reason='too far east')
+                    return True
+            reader.checked_for_overlap = True
 
-    def discard_reader(self, reader):
+        return False  # Reader is not discarded
+
+    def discard_reader(self, reader, reason):
         readername = reader.name
-        logger.debug('Discarding reader: ' + readername)
+        logger.debug('Discarding reader (%s): %s' % (reason, readername))
         del self.readers[readername]
         if not hasattr(self, 'discarded_readers'):
-            self.discarded_readers = [readername]
+            self.discarded_readers = {readername: reason}
         else:
-            self.discarded_readers.append(readername)
+            self.discarded_readers[readername] = reason
 
         # Remove from priority list
-        for var in self.priority_list:
+        for var in self.priority_list.copy():
             self.priority_list[var] = [
                 r for r in self.priority_list[var] if r != readername
             ]
             if len(self.priority_list[var]) == 0:
                 del self.priority_list[var]
-
-    def discard_irrelevant_readers(self):
-        discard = []
-
-        for readername in self.readers:
-            reader = self.readers[readername]
-            if reader.is_lazy:
-                continue
-
-            if not self.reader_relevant(reader):
-                discard.append(reader)
-
-        for reader in discard:
-            self.discard_reader(reader)
-            logger.debug('DISCARDED: ' + reader.name)
 
     def get_environment(self, variables, time, lon, lat, z, profiles):
         '''Retrieve environmental variables at requested positions.
@@ -1160,7 +1163,8 @@ class OpenDriftSimulation(PhysicsMethods, Timeable):
             self.set_fallback_values(refresh=False)
 
         # Discard any existing readers which are not relevant
-        self.discard_irrelevant_readers()
+        for readername, reader in self.readers.copy().items():
+            self.discard_reader_if_not_relevant(reader)
 
         if 'drift:truncate_ocean_model_below_m' in self._config:
             truncate_depth = self.get_config(
@@ -1256,10 +1260,26 @@ class OpenDriftSimulation(PhysicsMethods, Timeable):
                             lon[missing_indices], lat[missing_indices],
                             z[missing_indices], self.proj_latlon)
 
-                except Exception as e:
-                    logger.info('========================')
-                    logger.info('Exception:')
+                except NotCoveredError as e:
                     logger.info(e)
+                    self.timer_end('main loop:readers:' +
+                                   reader_name.replace(':', '<colon>'))
+                    if reader_name == reader_group[-1]:
+                        if self._initialise_next_lazy_reader() is not None:
+                            logger.debug(
+                                'Missing variables: calling get_environment recursively'
+                            )
+                            return self.get_environment(
+                                variables, time, lon, lat, z, profiles)
+                    continue
+
+                except Exception as e:  # Unknown error
+                    # TODO:
+                    # This could e.g. be due to corrupted files or
+                    # hangig thredds-servers. A reader could be discarded
+                    # after e.g. 3 such failed attempts
+                    logger.info('========================')
+                    logger.warning(e)
                     logger.debug(traceback.format_exc())
                     logger.info('========================')
                     self.timer_end('main loop:readers:' +
@@ -1666,6 +1686,8 @@ class OpenDriftSimulation(PhysicsMethods, Timeable):
                            self.elements_scheduled.lat.max() + deltalat)
             ])
             o = OceanDrift(loglevel='custom')
+            if hasattr(self, 'simulation_extent'):
+                o.simulation_extent = self.simulation_extent
             o.add_reader(reader_landmask)
             land_reader = reader_landmask
         else:
@@ -2383,9 +2405,9 @@ class OpenDriftSimulation(PhysicsMethods, Timeable):
             logger.debug('Horizontal diffusivity is 0, no random walk.')
             return
         dt = np.abs(self.time_step.total_seconds())
-        x_vel = self.elements.moving * np.sqrt(2 * D / dt) * np.random.normal(
+        x_vel = self.elements.moving * np.sqrt(2*D/dt) * np.random.normal(
             scale=1, size=self.num_elements_active())
-        y_vel = self.elements.moving * np.sqrt(2 * D / dt) * np.random.normal(
+        y_vel = self.elements.moving * np.sqrt(2*D/dt) * np.random.normal(
             scale=1, size=self.num_elements_active())
         speed = np.sqrt(x_vel * x_vel + y_vel * y_vel)
         logger.debug(
@@ -2687,6 +2709,8 @@ class OpenDriftSimulation(PhysicsMethods, Timeable):
                            start_time=self.start_time,
                            end_time=self.expected_end_time,
                            max_speed=self.max_speed)
+        # Store expected simulation extent, to check if new readers have coverage
+        self.simulation_extent = simulation_extent
 
         ##############################################################
         # If no landmask has been added, we determine it dynamically
@@ -2722,16 +2746,6 @@ class OpenDriftSimulation(PhysicsMethods, Timeable):
             self.add_reader(reader_landmask)
 
             self.timer_end('preparing main loop:making dynamical landmask')
-
-        # Move point seeded on land to ocean
-        if self.get_config('seed:ocean_only') is True and \
-            ('land_binary_mask' in self.required_variables):
-            #('land_binary_mask' not in self.fallback_values) and \
-            self.timer_start('preparing main loop:moving elements to ocean')
-            self.elements_scheduled.lon, self.elements_scheduled.lat = \
-                self.closest_ocean_points(self.elements_scheduled.lon,
-                                          self.elements_scheduled.lat)
-            self.timer_end('preparing main loop:moving elements to ocean')
 
         ####################################################################
         # Preparing history array for storage in memory and eventually file
@@ -2790,6 +2804,16 @@ class OpenDriftSimulation(PhysicsMethods, Timeable):
             self.io_init(outfile)
         else:
             self.outfile = None
+
+        # Move point seeded on land to ocean
+        if self.get_config('seed:ocean_only') is True and \
+            ('land_binary_mask' in self.required_variables):
+            #('land_binary_mask' not in self.fallback_values) and \
+            self.timer_start('preparing main loop:moving elements to ocean')
+            self.elements_scheduled.lon, self.elements_scheduled.lat = \
+                self.closest_ocean_points(self.elements_scheduled.lon,
+                                          self.elements_scheduled.lat)
+            self.timer_end('preparing main loop:moving elements to ocean')
 
         #############################
         # Check validity domain
@@ -3029,9 +3053,13 @@ class OpenDriftSimulation(PhysicsMethods, Timeable):
 
         ID_ind = self.elements.ID - 1
         time_ind = self.steps_output - 1 - self.steps_exported
+        if self.steps_calculation == self.expected_steps_calculation:
+            final_time_step = True
+        else:
+            final_time_step = False
 
         if steps_calculation_float.is_integer() or self.time_step < timedelta(
-                seconds=1):
+                seconds=1) or final_time_step is True:
             element_ind = range(len(ID_ind))  # We write all elements
         else:
             deactivated = np.where(self.elements.status != 0)[0]
@@ -5187,8 +5215,8 @@ class OpenDriftSimulation(PhysicsMethods, Timeable):
                 outStr += '  ' + lr + '\n'
         if hasattr(self, 'discarded_readers'):
             outStr += '\nDiscarded readers:\n'
-            for dr in self.discarded_readers:
-                outStr += '  ' + dr + '\n'
+            for dr, reason in self.discarded_readers.items():
+                outStr += '  %s (%s)\n' % (dr, reason)
         if hasattr(self, 'time'):
             outStr += '\nTime:\n'
             outStr += '\tStart: %s\n' % (self.start_time)
@@ -5418,3 +5446,8 @@ class OpenDriftSimulation(PhysicsMethods, Timeable):
         #del self.elements
         self.elements_deactivated = self.ElementType()  # Empty array
         self.elements = self.ElementType()  # Empty array
+
+
+    def gui_postproc(self):
+        '''To be overloaded by subclasses'''
+        pass
