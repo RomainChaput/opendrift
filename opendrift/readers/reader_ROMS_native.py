@@ -42,6 +42,8 @@ class Reader(BaseReader, StructuredReader):
             'mask_psi': 'land_binary_mask',
             'h': 'sea_floor_depth_below_sea_level',
             'zeta': 'sea_surface_height',
+            # 'u_eastward' : 'x_sea_water_velocity', 
+            # 'v_northward' : 'y_sea_water_velocity',
             'u': 'x_sea_water_velocity',
             'v': 'y_sea_water_velocity',
             'u_eastward': 'x_sea_water_velocity',
@@ -201,10 +203,8 @@ class Reader(BaseReader, StructuredReader):
         # Find all variables having standard_name
         self.variables = []
         for var_name in self.Dataset.variables:
-            var = self.Dataset.variables[var_name]
-            if 'standard_name' in var.attrs:
-                self.ROMS_variable_mapping[var_name] = var.attrs['standard_name']
             if var_name in self.ROMS_variable_mapping.keys():
+                var = self.Dataset.variables[var_name]
                 self.variables.append(self.ROMS_variable_mapping[var_name])
 
         # Run constructor of parent Reader class
@@ -482,9 +482,8 @@ class Reader(BaseReader, StructuredReader):
         variables['y'] = variables['y'].astype(np.float32)
         variables['time'] = nearestTime
 
-        if 'x_sea_water_velocity' in variables.keys() or \
-            'sea_ice_x_velocity' in variables.keys() or \
-            'x_wind' in variables.keys():
+        if 'x_sea_water_velocity' or 'sea_ice_x_velocity' \
+                or 'x_wind' in variables.keys():
             # We must rotate current vectors
             if not hasattr(self, 'angle_xi_east'):
                 if 'angle' in self.Dataset.variables:
