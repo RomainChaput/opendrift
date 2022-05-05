@@ -533,7 +533,7 @@ class LobsterLarvae(OceanDrift):
             return swimming_speed
    
     def get_current_direction(self):
-        ''' returns current direction in the trigonometric convention, as used in direct_orientation_habitat'''
+        ''' returns current direction in the trigonometric convention, can be used for rheotaxis behavior'''
         uu = self.environment['x_sea_water_velocity']
         vv = self.environment['y_sea_water_velocity']
         return np.arctan2(vv,uu)
@@ -588,7 +588,7 @@ class LobsterLarvae(OceanDrift):
         This could be due to an increased in predatory pressure closer to the coast,
         therefore, we remove all the phyllosoma larvae that are found within 20km of the coast
         '''
-        mid_stage_phyllosoma =  np.where( (self.elements.age_seconds >= self.get_config('biology:mid_stage_phyllosoma')) &	(self.elements.age_seconds <= self.get_config('biology:late_stage_phyllosoma')) )[0]
+        mid_stage_phyllosoma =  np.where( (self.elements.age_seconds >= self.get_config('biology:mid_stage_phyllosoma')) &	(self.elements.age_seconds <= self.get_config('biology:stage_puerulus')) )[0]
         logger.debug('Larvae : checking phyllosoma distance to shore - %s particles in mid to late_stage_phyllosoma' % (len(mid_stage_phyllosoma)))
         if len(mid_stage_phyllosoma) > 0:
             for i in range(len(self.elements.lon[mid_stage_phyllosoma])):
