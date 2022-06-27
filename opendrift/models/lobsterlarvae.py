@@ -287,12 +287,23 @@ class LobsterLarvae(OceanDrift):
         for poly in range(len(self.centers_habitat)):
             rad_centers.append([np.deg2rad(self.centers_habitat[poly][1]),np.deg2rad(self.centers_habitat[poly][0])])
         self.multiShp = MultiPolygon(polyList).buffer(0) # Aggregate polygons in a MultiPolygon object and buffer to fuse polygons and remove errors
+        self.habitat_mask = shapely.prepared.prep(MultiPolygon(polyList).buffer(0)) # same as in landmask custom
         self.ball_centers = BallTree(rad_centers, metric='haversine') # Create a Ball Tree with the centroids for faster computation
-        return self.multiShp, self.ball_centers, self.centers_habitat
+        return self.multiShp, self.ball_centers, self.centers_habitat, self.habitat_mask
 
 
     def find_nearest_habitat(self,lon,lat):
         return self.ball_centers.query(list(zip(np.deg2rad(lat), np.deg2rad(lon))), k=1)
+    
+    def inshore_landmask(self, inshore_landmask):
+        """Inshore habitat (coastline + 20km) to later remove mid-stage phyllosoma"""
+        polyShp = fiona.open(inshore_landmask) # import shapefile
+        polyList = []
+        for poly in polyShp: # create individual polygons from shapefile
+            polyGeom = Polygon(poly['geometry']['coordinates'][0])
+            polyList.append(polyGeom)
+        self.inshore_mask = shapely.prepared.prep(MultiPolygon(polyList).buffer(0))
+        return self.inshore_mask
     
     
 #####################################################################################################################
@@ -431,25 +442,19 @@ class LobsterLarvae(OceanDrift):
                                          reason='settled_on_coast')
                     
     def interact_with_habitat(self):
-           """Habitat interaction according to configuration setting
+            """Habitat interaction according to configuration setting
                The method checks if a particle is within the limit of an habitat before allowing settlement
-           """        
-           # Get age of particle
-           old_enough = np.where(self.elements.age_seconds >= self.get_config('biology:min_settlement_age_seconds'))[0]
-           # Extract particles positions
-           if len(old_enough) > 0 :
-               pts_lon = self.elements.lon[old_enough]
-               pts_lat = self.elements.lat[old_enough]
-               ## Check if position of particle is within boundaries of polygons => slow version because loop over polygons
-               for i in range(len(pts_lon)): # => faster version
-                    pt = Point(pts_lon[i], pts_lat[i])
-                    in_habitat = pt.within(self.multiShp)
-                    if in_habitat == True:
-                        self.environment.land_binary_mask[old_enough[i]] = 6
-           # Deactivate elements that are within a polygon and old enough to settle
-           # ** function expects an array of size consistent with self.elements.lon                
-           self.deactivate_elements((self.environment.land_binary_mask == 6), reason='settled_on_habitat')
-
+               Updated method following Simon Weppe bivalve larvae code
+            """        
+            if self.num_elements_active() == 0:
+                return
+            # Get age of particle and position of particles
+            old_and_in_habitat = np.logical_and(self.elements.age_seconds >= self.get_config('biology:min_settlement_age_seconds'), shapely.vectorized.contains(self.habitat_mask, self.elements.lon, self.elements.lat))
+            # Settle particle
+            if old_and_in_habitat.any():
+                self.deactivate_elements(old_and_in_habitat, reason='settled_on_habitat')
+                logger.debug('%s elements reached habitat and were older than %s sec. and were deactivated' \
+                             % (old_and_in_habitat.sum(),self.get_config('biology:min_settlement_age_seconds')))
 
 
 #####################################################################################################################
@@ -585,27 +590,17 @@ class LobsterLarvae(OceanDrift):
 
     def phyllosoma_mortality(self):
         ''' Phyllosoma are not found inshore between 4 and 12 months of dispersal (i.e between mid and late Phyllosoma stages)
-        This could be due to an increased in predatory pressure closer to the coast,
-        therefore, we remove all the phyllosoma larvae that are found within 20km of the coast
+         This could be due to an increased in predatory pressure closer to the coast,
+         therefore, we remove all the phyllosoma larvae that are found within 20km of the coast
         '''
         mid_stage_phyllosoma =  np.where( (self.elements.age_seconds >= self.get_config('biology:mid_stage_phyllosoma')) &	(self.elements.age_seconds <= self.get_config('biology:stage_puerulus')) )[0]
-        logger.debug('Larvae : checking phyllosoma distance to shore - %s particles in mid to late_stage_phyllosoma' % (len(mid_stage_phyllosoma)))
         if len(mid_stage_phyllosoma) > 0:
-            for i in range(len(self.elements.lon[mid_stage_phyllosoma])):
-                pt_lon = self.elements.lon[mid_stage_phyllosoma][i]
-                pt_lat = self.elements.lat[mid_stage_phyllosoma][i] 
-                # Remove phyllosoma found 20km inshore, or any other habitats defined by user (habitat_near[i]*6371 = distance in km)
-                lon_circle ,lat_circle = self.get_circle(pt_lon, pt_lat, 20e3) 
-                # check if any land points within the 20km radius
-                on_land, prof, missing = self.get_environment(['land_binary_mask'], self.time, \
-                                                            np.array(lon_circle), np.array(lat_circle), \
-                                                            0.0*np.array(lat_circle), None)
-                if np.array(on_land.view('f')).any():
-                    self.environment.land_binary_mask[mid_stage_phyllosoma[i]] = 8
-        if (self.environment.land_binary_mask == 8).any():
-            logger.debug('Larvae : removing %s phyllosoma that swam too close to shore' % (self.environment.land_binary_mask == 8).sum() )
-            self.deactivate_elements((self.environment.land_binary_mask == 8), reason='swam_too_close_to_shore')
-
+            mid_stage_phyllosoma_inshore = np.logical_and.reduce([self.elements.age_seconds >= self.get_config('biology:mid_stage_phyllosoma'), self.elements.age_seconds <= self.get_config('biology:stage_puerulus'), shapely.vectorized.contains(self.inshore_mask, self.elements.lon, self.elements.lat)])
+            logger.debug('Larvae : checking phyllosoma distance to shore - %s particles in mid to late_stage_phyllosoma' % (len(mid_stage_phyllosoma_inshore)))
+            if mid_stage_phyllosoma_inshore.any():
+                logger.debug('Larvae : removing %s phyllosoma that swam too close to shore' % mid_stage_phyllosoma_inshore.sum() )
+                self.deactivate_elements(mid_stage_phyllosoma_inshore, reason='swam_too_close_to_shore')
+    
     
     def puerulus_transition(self):
             '''Transition between the phyllosoma and puerelus stage: possible after 12 months of dispersal.'''
