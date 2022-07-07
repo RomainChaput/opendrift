@@ -6,8 +6,8 @@
 # 
 #  Authors : Romain Chaput, University of Wellington, Simon Weppe MetOcean Solutions/MetService New Zealand
 # 
-# Under development - more testing to do.
-# Stable version
+# Under development - some modules can be optimized
+# Stable version used for the lobster National Connectivity Experiment - MOANA project 2022/06/01
 
 import numpy as np
 from opendrift.models.oceandrift import OceanDrift, Lagrangian3DArray
@@ -234,39 +234,22 @@ class LobsterLarvae(OceanDrift):
         if len(surface[0]) > 0:
             self.elements.z[surface] = sea_surface_height[surface] -0.01 # set particle z at 0.01m below sea_surface_height
 
-
-    def get_circle(self,centerLon,centerLat,radius_meters):
-        # https://stackoverflow.com/questions/15886846/python-elegant-way-of-finding-the-gps-coordinates-of-a-circle-around-a-certain
-        radius_earth_meters = 6378137 
-        angle = np.linspace(0,2*np.pi,36)
-        dx = radius_meters * np.cos(angle)
-        dy = radius_meters * np.sin(angle)
-        lat_circle = centerLat + (180 / np.pi) * (dy / radius_earth_meters)
-        lon_circle = centerLon + (180 / np.pi) * (dx / radius_earth_meters) / np.cos(centerLat * np.pi / 180)
-        # import matplotlib.pyplot as plt
-        # plt.ion()
-        # plt.plot(centerLon,centerLat,'r.')
-        # plt.plot(lon_circle,lat_circle,'g.')
-        # import pdb;pdb.set_trace()
-        return lon_circle ,lat_circle
-
-        # see also..but slower
-        # https://gis.stackexchange.com/questions/289044/creating-buffer-circle-x-kilometers-from-point-using-python/289923
-        # 
-        # from functools import partial
-        # import pyproj
-        # from shapely.ops import transform
-        # from shapely.geometry import Point
-        #  proj_wgs84 = pyproj.Proj('+proj=longlat +datum=WGS84')
-        # # Azimuthal equidistant projection
-        # local_azimuthal_projection = '+proj=aeqd +lat_0={lat} +lon_0={lon} +x_0=0 +y_0=0'
-        # project = partial(pyproj.transform,
-        #                   pyproj.Proj(local_azimuthal_projection.format(lat=centerLat, lon=centerLon)),
-        #                   proj_wgs84)
-        # buf = Point(0, 0).buffer(radius_meters)  # distance in metres
-        # circle = transform(project, buf).exterior.xy
-        # lon_circle = circle[0]
-        # lat_circle = circle[1] 
+            
+    # Replaced by large coastline mask for faster processing
+    #def get_circle(self,centerLon,centerLat,radius_meters):
+    #    # https://stackoverflow.com/questions/15886846/python-elegant-way-of-finding-the-gps-coordinates-of-a-circle-around-a-certain
+    #    radius_earth_meters = 6378137 
+    #    angle = np.linspace(0,2*np.pi,36)
+    #    dx = radius_meters * np.cos(angle)
+    #    dy = radius_meters * np.sin(angle)
+    #    lat_circle = centerLat + (180 / np.pi) * (dy / radius_earth_meters)
+    #    lon_circle = centerLon + (180 / np.pi) * (dx / radius_earth_meters) / np.cos(centerLat * np.pi / 180)
+    #    # import matplotlib.pyplot as plt
+    #    # plt.ion()
+    #    # plt.plot(centerLon,centerLat,'r.')
+    #    # plt.plot(lon_circle,lat_circle,'g.')
+    #    # import pdb;pdb.set_trace()
+    #    return lon_circle ,lat_circle 
 
 
 
@@ -474,18 +457,12 @@ class LobsterLarvae(OceanDrift):
             Equations described in Codling et al., 2004 and Staaterman et al., 2012
             ** Algorithm could be vectorized to optimize speed (instead of looping through each particle)
             """
-            # Replaced by metamorphosis step where larvae have a transformation step
-            # Check if the particles are old enough to orient
-            # old_enough = np.where(self.elements.age_seconds >= self.get_config('biology:stage_puerulus'))[0]
-            #
             # Check if particles are ready to metamorphose in puerulus
             puerulus = np.where(self.elements.metamorphosis == 1)[0]
             logger.debug('Larvae : direct orientation of puerulus - %s particles ready for orientation ' % (len(puerulus)))
             if len(puerulus) > 0 :
                 # find closest habitat distance, and its index
                 habitat_near, habitat_id = self.find_nearest_habitat(self.elements.lon[puerulus],self.elements.lat[puerulus])
-                # old_close_enough = np.where( (self.elements.age_seconds >= self.get_config('biology:age_beginning_orientation')) & \
-                #                              (habitat_near.ravel()*6371. < self.get_config('biology:max_orient_distance')) )[0]
                 close_enough = (habitat_near.ravel()*6371. < self.get_config('biology:max_orient_distance')) # 6371km is earth radius 
                 logger.debug('Larvae : direct orientation of puerulus - moving %s particles towards nearest reef' % (close_enough.sum()))
 
@@ -538,12 +515,11 @@ class LobsterLarvae(OceanDrift):
             return swimming_speed
    
     def get_current_direction(self):
-        ''' returns current direction in the trigonometric convention, can be used for rheotaxis behavior'''
-        uu = self.environment['x_sea_water_velocity']
-        vv = self.environment['y_sea_water_velocity']
-        return np.arctan2(vv,uu)
+            ''' Not currently used: returns current direction in the trigonometric convention, can be used for rheotaxis behavior'''
+            uu = self.environment['x_sea_water_velocity']
+            vv = self.environment['y_sea_water_velocity']
+            return np.arctan2(vv,uu)
 
-    
     def update_terminal_velocity(self,Tprofiles=None, Sprofiles=None,z_index=None): 
             ''' Diel vertical migration for late life stages (VIII to XI) only. Modified from pelagicplankton_moana.py developed by Simon Weppe
             Keep all stages within 100m of the surface '''
@@ -589,17 +565,17 @@ class LobsterLarvae(OceanDrift):
 ###################################################################################################################
 
     def phyllosoma_mortality(self):
-        ''' Phyllosoma are not found inshore between 4 and 12 months of dispersal (i.e between mid and late Phyllosoma stages)
-         This could be due to an increased in predatory pressure closer to the coast,
-         therefore, we remove all the phyllosoma larvae that are found within 20km of the coast
-        '''
-        mid_stage_phyllosoma =  np.where( (self.elements.age_seconds >= self.get_config('biology:mid_stage_phyllosoma')) &	(self.elements.age_seconds <= self.get_config('biology:stage_puerulus')) )[0]
-        if len(mid_stage_phyllosoma) > 0:
-            mid_stage_phyllosoma_inshore = np.logical_and.reduce([self.elements.age_seconds >= self.get_config('biology:mid_stage_phyllosoma'), self.elements.age_seconds <= self.get_config('biology:stage_puerulus'), shapely.vectorized.contains(self.inshore_mask, self.elements.lon, self.elements.lat)])
-            logger.debug('Larvae : checking phyllosoma distance to shore - %s particles in mid to late_stage_phyllosoma' % (len(mid_stage_phyllosoma_inshore)))
-            if mid_stage_phyllosoma_inshore.any():
-                logger.debug('Larvae : removing %s phyllosoma that swam too close to shore' % mid_stage_phyllosoma_inshore.sum() )
-                self.deactivate_elements(mid_stage_phyllosoma_inshore, reason='swam_too_close_to_shore')
+            ''' Phyllosoma are not found inshore between 4 and 12 months of dispersal (i.e between mid and late Phyllosoma stages)
+             This could be due to an increased in predatory pressure closer to the coast,
+             therefore, we remove all the phyllosoma larvae that are found within 20km of the coast
+            '''
+            mid_stage_phyllosoma =  np.where( (self.elements.age_seconds >= self.get_config('biology:mid_stage_phyllosoma')) &	(self.elements.age_seconds <= self.get_config('biology:stage_puerulus')) )[0]
+            if len(mid_stage_phyllosoma) > 0:
+                mid_stage_phyllosoma_inshore = np.logical_and.reduce([self.elements.age_seconds >= self.get_config('biology:mid_stage_phyllosoma'), self.elements.age_seconds <= self.get_config('biology:stage_puerulus'), shapely.vectorized.contains(self.inshore_mask, self.elements.lon, self.elements.lat)])
+                logger.debug('Larvae : checking phyllosoma distance to shore - %s particles in mid to late_stage_phyllosoma' % (len(mid_stage_phyllosoma_inshore)))
+                if mid_stage_phyllosoma_inshore.any():
+                    logger.debug('Larvae : removing %s phyllosoma that swam too close to shore' % mid_stage_phyllosoma_inshore.sum() )
+                    self.deactivate_elements(mid_stage_phyllosoma_inshore, reason='swam_too_close_to_shore')
     
     
     def puerulus_transition(self):
@@ -680,6 +656,5 @@ class LobsterLarvae(OceanDrift):
             self.interact_with_habitat()
 
         # Mortality due to shore proximity (<20km)
-        # slow, may be more relevant to apply in post-processing 
         if True: 
             self.phyllosoma_mortality()
