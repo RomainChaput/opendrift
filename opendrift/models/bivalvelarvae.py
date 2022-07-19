@@ -15,6 +15,7 @@
 # 
 # Modified: 16/06/2021. RChaput: Add settlement restricted to suitable habitat only, vertical swimming behavior, and maximum depth of dispersal.
 #			         Add Haliotis iris specific behavior: o.set_config('drift:Haliotis_iris', True)
+# Modified: 19/07/2022. RChaput: Faster computation for settlement in habitat.
 #
 # Lines to add to script to run the vertical swimming code:
 # ################################
