@@ -182,7 +182,7 @@ class BivalveLarvae(OceanDrift):
         for poly in range(len(centers)):
             rad_centers.append([np.deg2rad(centers[poly][1]),np.deg2rad(centers[poly][0])])
         self.multiShp = MultiPolygon(polyList).buffer(0) # Aggregate polygons in a MultiPolygon object and buffer to fuse polygons and remove errors
-        self.habitat_mask = shapely.prepared.prep(Multipolygon(polyList).buffer(0)) # Same as landmask custom
+        self.habitat_mask = shapely.prepared.prep(MultiPolygon(polyList).buffer(0)) # Same as landmask custom
         self.ball_centers = BallTree(rad_centers, metric='haversine') # Create a Ball Tree with the centroids for faster computation
         return self.multiShp, self.ball_centers, self.habitat_mask
     
