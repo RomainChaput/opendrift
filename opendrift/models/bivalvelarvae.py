@@ -365,7 +365,7 @@ class BivalveLarvae(OceanDrift):
             if self.num_elements_active() == 0:
                 return
             # Get age of particle and position of particles
-            old_and_in_habitat = np.logical_and(self.elements.age_seconds >= self.get_config('biology:min_settlement_age_seconds'), shapely.vectorized.contains(self.habitat_mask, self.elements.lon, self.elements.lat))
+            old_and_in_habitat = np.logical_and(self.elements.age_seconds >= self.get_config('drift:min_settlement_age_seconds'), shapely.vectorized.contains(self.habitat_mask, self.elements.lon, self.elements.lat))
             # Settle particle
             if old_and_in_habitat.any():
                 self.deactivate_elements(old_and_in_habitat, reason='settled_on_habitat')
