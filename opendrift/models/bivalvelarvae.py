@@ -370,7 +370,7 @@ class BivalveLarvae(OceanDrift):
             if old_and_in_habitat.any():
                 self.deactivate_elements(old_and_in_habitat, reason='settled_on_habitat')
                 logger.debug('%s elements reached habitat and were older than %s sec. and were deactivated' \
-                             % (old_and_in_habitat.sum(),self.get_config('biology:min_settlement_age_seconds')))
+                             % (old_and_in_habitat.sum(),self.get_config('drift:min_settlement_age_seconds')))
 	
                                 
     def vertical_swimming(self):
