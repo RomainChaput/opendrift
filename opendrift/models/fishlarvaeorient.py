@@ -15,7 +15,7 @@
 #  
 # Author : Romain Chaput
 # 
-#  Under development - first draft: 25/06/2021 - Last update: 15/10/2021
+#  Under development - first draft: 25/06/2021 - Last update: 26/07/2022
 
 import numpy as np
 from opendrift.models.oceandrift import OceanDrift, Lagrangian3DArray
