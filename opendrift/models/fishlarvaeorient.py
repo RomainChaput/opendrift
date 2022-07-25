@@ -282,8 +282,9 @@ class FishLarvaeOrient(OceanDrift):
 		for poly in range(len(self.centers_habitat)):
 			rad_centers.append([np.deg2rad(self.centers_habitat[poly][1]),np.deg2rad(self.centers_habitat[poly][0])])
 		self.multiShp = MultiPolygon(polyList).buffer(0) # Aggregate polygons in a MultiPolygon object and buffer to fuse polygons and remove errors
+		self.habitat_mask = shapely.prepared.prep(MultiPolygon(polyList).buffer(0)) # same as in landmask custom
 		self.ball_centers = BallTree(rad_centers, metric='haversine') # Create a Ball Tree with the centroids for faster computation
-		return self.multiShp, self.ball_centers, self.centers_habitat
+		return self.multiShp, self.ball_centers, self.centers_habitat, self.habitat_mask
 		
 	#####################################################################################################################
 	# Interaction with environment
@@ -421,25 +422,19 @@ class FishLarvaeOrient(OceanDrift):
 										 reason='settled_on_coast')
 					
 	def interact_with_habitat(self):
-		   """Habitat interaction according to configuration setting
-			   The method checks if a particle is within the limit of an habitat before to allow settlement
-		   """        
-		   # Get age of particle
-		   old_enough = np.where(self.elements.age_seconds >= self.get_config('biology:min_settlement_age_seconds'))[0]
-		   # Extract particles positions
-		   if len(old_enough) > 0 :
-			   pts_lon = self.elements.lon[old_enough]
-			   pts_lat = self.elements.lat[old_enough]
-			   for i in range(len(pts_lon)): # => faster version
-				    pt = Point(pts_lon[i], pts_lat[i])
-				    in_habitat = pt.within(self.multiShp)
-				    if in_habitat == True:
-					     self.environment.land_binary_mask[old_enough[i]] = 6
-						
-		   # Deactivate elements that are within a polygon and old enough to settle
-		   # ** function expects an array of size consistent with self.elements.lon                
-		   self.deactivate_elements((self.environment.land_binary_mask == 6), reason='home_sweet_home')
-
+		"""Habitat interaction according to configuration setting
+		   The method checks if a particle is within the limit of an habitat before to allow settlement
+		"""   
+		if self.num_elements_active() == 0:
+			return
+		# Get age of particle and position of particles
+		old_and_in_habitat = np.logical_and(self.elements.age_seconds >= self.get_config('biology:min_settlement_age_seconds'), shapely.vectorized.contains(self.habitat_mask, self.elements.lon, self.elements.lat))
+		# Settle particle
+		if old_and_in_habitat.any():
+			self.deactivate_elements(old_and_in_habitat, reason='settled_on_habitat')
+			logger.debug('%s elements reached habitat and were older than %s sec. and were deactivated' \
+				     % (old_and_in_habitat.sum(),self.get_config('biology:min_settlement_age_seconds')))
+	
 	
 	#####################################################################################################################
 	# IBM: horizontal and vertical movements
