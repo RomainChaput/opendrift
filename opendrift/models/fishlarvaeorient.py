@@ -515,7 +515,7 @@ class FishLarvaeOrient(OceanDrift):
 					ti  = np.random.vonmises(0, 5)
 					#Compute rheotaxis heading
 					#import pdb; pdb.set_trace()  
-					thetaRheo = -np.arctan2(self.environment.y_sea_water_velocity[old_enough[i]], self.environment.x_sea_water_velocity[old_enough[i]])
+					thetaRheo = (np.arctan2(self.environment.y_sea_water_velocity[old_enough[i]], self.environment.x_sea_water_velocity[old_enough[i]])+ np.pi)%(2*np.pi)
 					theta = thetaRheo + ti
 				
 					# Compute current speed absolute value
@@ -546,7 +546,7 @@ class FishLarvaeOrient(OceanDrift):
 						# Compute randomness of direction
 						ti  = np.random.vonmises(0, 5)
 						#Compute rheotaxis heading
-						thetaRheo = -np.arctan2(self.environment.y_sea_water_velocity[old_enough[i]], self.environment.x_sea_water_velocity[old_enough[i]])
+						thetaRheo = (np.arctan2(self.environment.y_sea_water_velocity[old_enough[i]], self.environment.x_sea_water_velocity[old_enough[i]])+ np.pi)%(2*np.pi)
 						theta = thetaRheo + ti
 				
 						# Compute current speed absolute value
